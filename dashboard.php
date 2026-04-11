@@ -159,8 +159,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $d = dataParaBanco(trim($_POST['date'][$i] ?? ''));
             $type = isset($_POST['type'][$i]) && $_POST['type'][$i] === 'income' ? 'income' : 'expense';
             $planned = isset($_POST['planned'][$i]) && $_POST['planned'][$i] === '1' ? 1 : 0;
+            $parcelas = isset($_POST['parcelas'][$i]) ? (int)$_POST['parcelas'][$i] : 0;
+            $parcelado = isset($_POST['parcelado'][$i]) && $_POST['parcelado'][$i] === '1' && $parcelas > 1;
+
             if ($n && $a && $d && is_numeric($a)) {
-                $stmt->execute([':user_id'=>$current_user_id,':name'=>$n,':amount'=>$a,':due_date'=>$d,':type'=>$type,':planned'=>$planned,':period'=>(new DateTime($d))->format('Y-m')]);
+                if ($parcelado) {
+                    $baseDate = new DateTime($d);
+                    for ($p = 1; $p <= $parcelas; $p++) {
+                        $nomeParcela = $n . ' (' . $p . '/' . $parcelas . ')';
+                        $parcelDate = clone $baseDate;
+                        if ($p > 1) {
+                            $parcelDate->modify('+' . ($p - 1) . ' months');
+                            // Ajuste para meses curtos
+                            $originalDay = (int)$baseDate->format('d');
+                            $lastDayOfMonth = (int)$parcelDate->format('t');
+                            if ($originalDay > $lastDayOfMonth) {
+                                $parcelDate->setDate((int)$parcelDate->format('Y'), (int)$parcelDate->format('m'), $lastDayOfMonth);
+                            }
+                        }
+                        $parcelDateStr = $parcelDate->format('Y-m-d');
+                        $stmt->execute([':user_id'=>$current_user_id,':name'=>$nomeParcela,':amount'=>$a,':due_date'=>$parcelDateStr,':type'=>$type,':planned'=>$planned,':period'=>$parcelDate->format('Y-m')]);
+                    }
+                } else {
+                    $stmt->execute([':user_id'=>$current_user_id,':name'=>$n,':amount'=>$a,':due_date'=>$d,':type'=>$type,':planned'=>$planned,':period'=>(new DateTime($d))->format('Y-m')]);
+                }
             }
         }
         header("Location: " . $redirectUrl); exit;
@@ -1611,6 +1633,17 @@ body.light ::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
                                 <option value="0">Não</option>
                             </select>
                         </div>
+                        <div>
+                            <label>Parcelado</label>
+                            <select name="parcelado[]" onchange="toggleParcelas(this)">
+                                <option value="0">Não</option>
+                                <option value="1">Sim</option>
+                            </select>
+                        </div>
+                        <div class="parcelas-field" style="display:none;">
+                            <label>Parcelas</label>
+                            <input name="parcelas[]" type="number" min="2" max="99" value="2" style="width:70px;">
+                        </div>
                         <div style="padding-bottom:1px;">
                             <label style="visibility:hidden">x</label>
                             <button type="button" class="btn-icon del" onclick="removeEntryRow(this)" style="width:36px;height:36px;">
@@ -1845,12 +1878,23 @@ document.getElementById('passwordModal').classList.add('open');
 <?php endif; ?>
 
 // Add entry row
+function toggleParcelas(sel) {
+    const row = sel.closest('.entry-row');
+    const parcelasField = row.querySelector('.parcelas-field');
+    parcelasField.style.display = sel.value === '1' ? '' : 'none';
+    if (sel.value === '0') {
+        parcelasField.querySelector('input').value = '2';
+    }
+}
+
 function addEntryRow() {
     const container = document.getElementById('entryRows');
     const firstRow = container.querySelector('.entry-row');
     const newRow = firstRow.cloneNode(true);
     newRow.querySelectorAll('input').forEach(i => { if (i.type !== 'date') i.value = ''; });
     newRow.querySelectorAll('select').forEach(s => s.selectedIndex = 0);
+    const parcelasField = newRow.querySelector('.parcelas-field');
+    if (parcelasField) { parcelasField.style.display = 'none'; parcelasField.querySelector('input').value = '2'; }
     container.appendChild(newRow);
     newRow.querySelector('input[type="text"]').focus();
 }
