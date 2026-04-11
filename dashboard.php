@@ -244,6 +244,28 @@ if ($selectedPeriod !== 'all') {
 
 $expenseRows = array_filter($rows, fn($r) => ($r['type'] ?? 'expense') === 'expense');
 $incomeRows  = array_filter($rows, fn($r) => ($r['type'] ?? 'expense') === 'income');
+
+// ---- Dados para gráfico "Top Despesas" ----
+if ($selectedPeriod !== 'all') {
+    $topStmt = $pdo->prepare("SELECT name, SUM(amount) as total FROM expenses WHERE type='expense' AND period=:period AND user_id=:uid GROUP BY name ORDER BY total DESC LIMIT 7");
+    $topStmt->execute([':period'=>$selectedPeriod,':uid'=>$current_user_id]);
+} else {
+    $topStmt = $pdo->prepare("SELECT name, SUM(amount) as total FROM expenses WHERE type='expense' AND user_id=:uid GROUP BY name ORDER BY total DESC LIMIT 7");
+    $topStmt->execute([':uid'=>$current_user_id]);
+}
+$topExpenses = $topStmt->fetchAll(PDO::FETCH_ASSOC);
+
+// ---- Dados para gráfico "Despesas pagas vs pendentes" ----
+if ($selectedPeriod !== 'all') {
+    $paidStmt = $pdo->prepare("SELECT SUM(CASE WHEN paid=1 THEN amount ELSE 0 END) as pago, SUM(CASE WHEN paid=0 THEN amount ELSE 0 END) as pendente FROM expenses WHERE type='expense' AND period=:period AND user_id=:uid");
+    $paidStmt->execute([':period'=>$selectedPeriod,':uid'=>$current_user_id]);
+} else {
+    $paidStmt = $pdo->prepare("SELECT SUM(CASE WHEN paid=1 THEN amount ELSE 0 END) as pago, SUM(CASE WHEN paid=0 THEN amount ELSE 0 END) as pendente FROM expenses WHERE type='expense' AND user_id=:uid");
+    $paidStmt->execute([':uid'=>$current_user_id]);
+}
+$paidData = $paidStmt->fetch(PDO::FETCH_ASSOC);
+$paidTotal = (float)($paidData['pago'] ?? 0);
+$pendingTotal = (float)($paidData['pendente'] ?? 0);
 ?>
 <!doctype html>
 <html lang="pt-BR">
@@ -628,15 +650,65 @@ body::after {
 .stat-card.accent .stat-icon { background: rgba(0,212,255,0.12); color: var(--accent); }
 .stat-card.success .stat-icon { background: rgba(0,255,136,0.12); color: var(--success); }
 
-/* ===== CHART CARD ===== */
+/* ===== CHARTS GRID ===== */
+.charts-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 20px;
+    margin-bottom: 24px;
+}
+
 .chart-card {
     background: var(--surface);
     border-radius: var(--radius);
     padding: 20px 24px;
-    border: 1px solid rgba(0,212,255,0.1);
-    margin-bottom: 24px;
-    box-shadow: 0 0 30px rgba(0,212,255,0.03);
+    border: 1px solid rgba(255,255,255,0.06);
+    position: relative;
+    overflow: hidden;
+    transition: transform 0.2s, box-shadow 0.3s;
 }
+
+.chart-card:hover {
+    transform: translateY(-2px);
+}
+
+/* Neon border glow effect */
+.neon-border::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: var(--radius);
+    padding: 1.5px;
+    background: var(--neon-gradient);
+    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    pointer-events: none;
+}
+
+.neon-border::after {
+    content: '';
+    position: absolute;
+    inset: -1px;
+    border-radius: var(--radius);
+    background: var(--neon-gradient);
+    opacity: 0.08;
+    filter: blur(12px);
+    pointer-events: none;
+    z-index: -1;
+}
+
+.neon-cyan  { --neon-gradient: linear-gradient(135deg, #00d4ff, #0099cc, #00d4ff); }
+.neon-green { --neon-gradient: linear-gradient(135deg, #00ff88, #00cc6a, #00ff88); }
+.neon-red   { --neon-gradient: linear-gradient(135deg, #ff2d55, #cc2244, #ff2d55); }
+.neon-purple { --neon-gradient: linear-gradient(135deg, #a855f7, #7c3aed, #a855f7); }
+.neon-yellow { --neon-gradient: linear-gradient(135deg, #ffd600, #ccaa00, #ffd600); }
+
+.neon-cyan:hover  { box-shadow: 0 0 30px rgba(0,212,255,0.15), 0 0 60px rgba(0,212,255,0.05); }
+.neon-green:hover { box-shadow: 0 0 30px rgba(0,255,136,0.15), 0 0 60px rgba(0,255,136,0.05); }
+.neon-red:hover   { box-shadow: 0 0 30px rgba(255,45,85,0.15), 0 0 60px rgba(255,45,85,0.05); }
+.neon-purple:hover { box-shadow: 0 0 30px rgba(168,85,247,0.15), 0 0 60px rgba(168,85,247,0.05); }
+.neon-yellow:hover { box-shadow: 0 0 30px rgba(255,214,0,0.15), 0 0 60px rgba(255,214,0,0.05); }
 
 .chart-header {
     display: flex;
@@ -653,55 +725,21 @@ body::after {
 
 .chart-subtitle { font-size: 12px; color: var(--muted); margin-top: 2px; }
 
-/* Chart inner layout: bar 85% | pie 15% */
-.chart-inner {
-    display: flex;
-    align-items: center;
-    gap: 0;
-}
-
-.chart-bar-wrap {
-    flex: 0 0 83%;
-    max-width: 83%;
-    position: relative;
-    height: 200px;
-}
-
-.chart-bar-wrap canvas { height: 200px !important; }
-
-.chart-divider {
-    width: 1px;
-    height: 180px;
-    background: var(--border);
-    margin: 0 16px;
-    flex-shrink: 0;
-}
-
-.chart-pie-wrap {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-}
-
-.pie-title {
-    font-size: 10px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--muted);
-    text-align: center;
-}
-
-.chart-pie-wrap canvas { max-width: 120px; max-height: 120px; }
-
 .pie-empty {
     font-size: 11px;
     color: var(--muted);
     text-align: center;
     padding: 12px;
+}
+
+@media (max-width: 1200px) {
+    .charts-grid { grid-template-columns: repeat(2, 1fr); }
+    .charts-grid .chart-card:first-child { grid-column: span 2; }
+}
+
+@media (max-width: 768px) {
+    .charts-grid { grid-template-columns: 1fr; }
+    .charts-grid .chart-card:first-child { grid-column: span 1; }
 }
 
 /* Dark Mode Toggle Button */
@@ -773,7 +811,8 @@ body.light .stat-card.warning .stat-icon { background: var(--warning-light); col
 body.light .stat-card.accent .stat-icon { background: var(--accent-light); color: var(--accent); }
 body.light .stat-card.success .stat-icon { background: var(--success-light); color: var(--success); }
 
-body.light .chart-card { border-color: var(--border); box-shadow: none; }
+body.light .chart-card { border-color: var(--border); }
+body.light .neon-border::after { opacity: 0.04; }
 body.light .table-card { border-color: var(--border); }
 body.light .data-table tbody tr:hover { background: #fafbfc; }
 
@@ -1353,23 +1392,73 @@ body.light ::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
             </div>
         </div>
 
-        <!-- CHART -->
-        <div class="chart-card">
-            <div class="chart-header">
-                <div>
-                    <div class="chart-title">Histórico mensal</div>
-                    <div class="chart-subtitle">Receitas vs Despesas — últimos 12 meses</div>
+        <!-- CHARTS GRID -->
+        <div class="charts-grid">
+            <!-- 1. Histórico mensal (barras) -->
+            <div class="chart-card neon-border neon-cyan" style="grid-column: span 2;">
+                <div class="chart-header">
+                    <div>
+                        <div class="chart-title">Histórico mensal</div>
+                        <div class="chart-subtitle">Receitas vs Despesas — últimos 12 meses</div>
+                    </div>
                 </div>
-            </div>
-            <div class="chart-inner">
-                <div class="chart-bar-wrap">
+                <div style="position:relative;height:220px;">
                     <canvas id="monthlyChart"></canvas>
                 </div>
-                <div class="chart-divider"></div>
-                <div class="chart-pie-wrap">
-                    <div class="pie-title">Despesas por categoria</div>
+            </div>
+
+            <!-- 2. Evolução do Saldo (linha) -->
+            <div class="chart-card neon-border neon-green">
+                <div class="chart-header">
+                    <div>
+                        <div class="chart-title">Evolução do Saldo</div>
+                        <div class="chart-subtitle">Saldo acumulado mês a mês</div>
+                    </div>
+                </div>
+                <div style="position:relative;height:200px;">
+                    <canvas id="balanceChart"></canvas>
+                </div>
+            </div>
+
+            <!-- 3. Despesas por categoria (doughnut) -->
+            <div class="chart-card neon-border neon-purple">
+                <div class="chart-header">
+                    <div>
+                        <div class="chart-title">Despesas por Categoria</div>
+                        <div class="chart-subtitle">Distribuição do período atual</div>
+                    </div>
+                </div>
+                <div style="position:relative;height:200px;display:flex;align-items:center;justify-content:center;">
                     <canvas id="pieChart"></canvas>
                     <div id="pieEmpty" class="pie-empty" style="display:none;">Sem dados no período</div>
+                </div>
+            </div>
+
+            <!-- 4. Top Despesas (barras horizontais) -->
+            <div class="chart-card neon-border neon-red">
+                <div class="chart-header">
+                    <div>
+                        <div class="chart-title">Top Despesas</div>
+                        <div class="chart-subtitle">Maiores gastos do período</div>
+                    </div>
+                </div>
+                <div style="position:relative;height:200px;">
+                    <canvas id="topExpensesChart"></canvas>
+                    <div id="topEmpty" class="pie-empty" style="display:none;">Sem despesas no período</div>
+                </div>
+            </div>
+
+            <!-- 5. Pagas vs Pendentes (doughnut com centro) -->
+            <div class="chart-card neon-border neon-yellow">
+                <div class="chart-header">
+                    <div>
+                        <div class="chart-title">Pagas vs Pendentes</div>
+                        <div class="chart-subtitle">Status das despesas</div>
+                    </div>
+                </div>
+                <div style="position:relative;height:200px;display:flex;align-items:center;justify-content:center;">
+                    <canvas id="paidChart"></canvas>
+                    <div id="paidEmpty" class="pie-empty" style="display:none;">Sem despesas no período</div>
                 </div>
             </div>
         </div>
@@ -1734,24 +1823,29 @@ function getChartColors() {
         tickColor: light ? '#6b7280' : '#64748b',
         expenseBg: light ? 'rgba(220,38,38,0.12)' : 'rgba(255,45,85,0.15)',
         expenseBorder: light ? '#dc2626' : '#ff2d55',
-        incomeBg: light ? 'rgba(5,150,105,0.12)' : 'rgba(0,255,136,0.15)',
+        incomeBg: light ? 'rgba(5,150,105,0.12)' : 'rgba(0,255,136,0.12)',
         incomeBorder: light ? '#059669' : '#00ff88',
+        balanceLine: light ? '#059669' : '#00ff88',
+        balanceNeg: light ? '#dc2626' : '#ff2d55',
     };
 }
 
-let barChartInst = null;
-let pieChartInst = null;
+const chartInstances = {};
+
+function destroyChart(key) {
+    if (chartInstances[key]) { chartInstances[key].destroy(); chartInstances[key] = null; }
+}
 
 function buildCharts() {
     fetch('monthly_data.php?months_back=11')
       .then(r => r.json())
       .then(d => {
         const c = getChartColors();
+        const fontOpts = { family: 'Sora', size: 10 };
 
-        // ---- BAR CHART ----
-        const ctx = document.getElementById('monthlyChart').getContext('2d');
-        if (barChartInst) barChartInst.destroy();
-        barChartInst = new Chart(ctx, {
+        // ---- 1. BAR CHART (Receitas vs Despesas) ----
+        destroyChart('bar');
+        chartInstances.bar = new Chart(document.getElementById('monthlyChart').getContext('2d'), {
           type: 'bar',
           data: {
             labels: d.labels,
@@ -1762,7 +1856,7 @@ function buildCharts() {
                 backgroundColor: c.expenseBg,
                 borderColor: c.expenseBorder,
                 borderWidth: 1.5,
-                borderRadius: 4,
+                borderRadius: 6,
                 barPercentage: 0.35,
                 categoryPercentage: 0.7,
               },
@@ -1772,7 +1866,7 @@ function buildCharts() {
                 backgroundColor: c.incomeBg,
                 borderColor: c.incomeBorder,
                 borderWidth: 1.5,
-                borderRadius: 4,
+                borderRadius: 6,
                 barPercentage: 0.35,
                 categoryPercentage: 0.7,
               }
@@ -1789,19 +1883,66 @@ function buildCharts() {
               }
             },
             scales: {
-              x: { grid: { display: false }, ticks: { font: { family: 'Sora', size: 10 }, color: c.tickColor } },
-              y: { grid: { color: c.gridColor }, beginAtZero: true, ticks: { font: { family: 'Sora', size: 10 }, color: c.tickColor, callback: v => 'R$' + (v/1000).toFixed(0) + 'k' } }
+              x: { grid: { display: false }, ticks: { font: fontOpts, color: c.tickColor } },
+              y: { grid: { color: c.gridColor }, beginAtZero: true, ticks: { font: fontOpts, color: c.tickColor, callback: v => 'R$' + (v >= 1000 ? (v/1000).toFixed(0) + 'k' : v) } }
             }
           }
         });
 
-        // ---- PIE CHART (expense categories from labels) ----
+        // ---- 2. LINE CHART (Evolução do Saldo) ----
+        const balanceData = d.incomes.map((inc, i) => inc - d.expenses[i]);
+        const cumBalance = [];
+        balanceData.reduce((acc, v, i) => { cumBalance[i] = acc + v; return cumBalance[i]; }, 0);
+
+        const balanceCtx = document.getElementById('balanceChart').getContext('2d');
+        const gradientGreen = balanceCtx.createLinearGradient(0, 0, 0, 200);
+        gradientGreen.addColorStop(0, document.body.classList.contains('light') ? 'rgba(5,150,105,0.2)' : 'rgba(0,255,136,0.2)');
+        gradientGreen.addColorStop(1, 'rgba(0,255,136,0)');
+
+        destroyChart('balance');
+        chartInstances.balance = new Chart(balanceCtx, {
+          type: 'line',
+          data: {
+            labels: d.labels,
+            datasets: [{
+              label: 'Saldo',
+              data: cumBalance,
+              borderColor: c.balanceLine,
+              backgroundColor: gradientGreen,
+              borderWidth: 2,
+              fill: true,
+              tension: 0.4,
+              pointRadius: 3,
+              pointBackgroundColor: c.balanceLine,
+              pointBorderWidth: 0,
+              pointHoverRadius: 6,
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              legend: { display: false },
+              tooltip: {
+                callbacks: { label: ctx => ' R$ ' + ctx.parsed.y.toLocaleString('pt-BR', {minimumFractionDigits: 2}) }
+              }
+            },
+            scales: {
+              x: { grid: { display: false }, ticks: { font: fontOpts, color: c.tickColor } },
+              y: { grid: { color: c.gridColor }, ticks: { font: fontOpts, color: c.tickColor, callback: v => 'R$' + (Math.abs(v) >= 1000 ? (v/1000).toFixed(0) + 'k' : v) } }
+            }
+          }
+        });
+
+        // Build remaining charts
         buildPieChart();
+        buildTopExpensesChart();
+        buildPaidChart();
       });
 }
 
+// ---- 3. DOUGHNUT (Despesas por categoria) ----
 function buildPieChart() {
-    // Use current period expenses grouped by first word / name from the visible table
     const rows = document.querySelectorAll('.table-card:first-child tbody tr:not(.empty-row)');
     const map = {};
     rows.forEach(tr => {
@@ -1811,7 +1952,6 @@ function buildPieChart() {
         const rawAmt = amtEl.textContent.replace(/[R$\s.]/g, '').replace(',', '.');
         const amt = parseFloat(rawAmt);
         if (isNaN(amt) || amt <= 0) return;
-        // Simplify category: take first 2 words
         const words = nameEl.textContent.trim().split(/\s+/);
         const cat = words.slice(0, 2).join(' ');
         map[cat] = (map[cat] || 0) + amt;
@@ -1819,7 +1959,6 @@ function buildPieChart() {
 
     const labels = Object.keys(map);
     const data   = Object.values(map);
-
     const canvas  = document.getElementById('pieChart');
     const emptyEl = document.getElementById('pieEmpty');
 
@@ -1837,9 +1976,8 @@ function buildPieChart() {
         '#6366f1','#14b8a6','#f59e0b','#0ea5e9','#d946ef',
     ];
 
-    const ctx2 = canvas.getContext('2d');
-    if (pieChartInst) pieChartInst.destroy();
-    pieChartInst = new Chart(ctx2, {
+    destroyChart('pie');
+    chartInstances.pie = new Chart(canvas.getContext('2d'), {
         type: 'doughnut',
         data: {
             labels: labels,
@@ -1847,20 +1985,145 @@ function buildPieChart() {
                 data: data,
                 backgroundColor: palette.slice(0, labels.length),
                 borderWidth: 0,
-                hoverOffset: 6,
+                hoverOffset: 8,
             }]
         },
         options: {
             responsive: true,
-            maintainAspectRatio: true,
-            cutout: '60%',
+            maintainAspectRatio: false,
+            cutout: '55%',
             plugins: {
-                legend: { display: false },
+                legend: {
+                    position: 'right',
+                    labels: {
+                        usePointStyle: true,
+                        padding: 10,
+                        font: { family: 'Sora', size: 10 },
+                        color: getChartColors().tickColor,
+                        boxWidth: 8,
+                    }
+                },
                 tooltip: {
                     callbacks: {
                         label: ctx => {
                             const total = ctx.dataset.data.reduce((a,b) => a+b, 0);
                             const pct = ((ctx.parsed / total) * 100).toFixed(1);
+                            return ` R$ ${ctx.parsed.toLocaleString('pt-BR', {minimumFractionDigits:2})} (${pct}%)`;
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+
+// ---- 4. TOP DESPESAS (barras horizontais) ----
+function buildTopExpensesChart() {
+    const topData = <?= json_encode($topExpenses) ?>;
+    const canvas = document.getElementById('topExpensesChart');
+    const emptyEl = document.getElementById('topEmpty');
+
+    if (!topData || topData.length === 0) {
+        canvas.style.display = 'none';
+        emptyEl.style.display = 'block';
+        return;
+    }
+    canvas.style.display = '';
+    emptyEl.style.display = 'none';
+
+    const c = getChartColors();
+    const labels = topData.map(r => r.name.length > 18 ? r.name.substring(0,18) + '…' : r.name);
+    const values = topData.map(r => parseFloat(r.total));
+
+    const neonColors = ['#ff2d55','#ff6b35','#ffd600','#f97316','#ec4899','#a855f7','#d946ef'];
+
+    destroyChart('top');
+    chartInstances.top = new Chart(canvas.getContext('2d'), {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [{
+                data: values,
+                backgroundColor: neonColors.slice(0, values.length).map(c => c + '25'),
+                borderColor: neonColors.slice(0, values.length),
+                borderWidth: 1.5,
+                borderRadius: 4,
+                barPercentage: 0.7,
+            }]
+        },
+        options: {
+            indexAxis: 'y',
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    callbacks: { label: ctx => ' R$ ' + ctx.parsed.x.toLocaleString('pt-BR', {minimumFractionDigits: 2}) }
+                }
+            },
+            scales: {
+                x: { grid: { color: c.gridColor }, ticks: { font: { family: 'Sora', size: 9 }, color: c.tickColor, callback: v => 'R$' + (v >= 1000 ? (v/1000).toFixed(0) + 'k' : v) } },
+                y: { grid: { display: false }, ticks: { font: { family: 'Sora', size: 10 }, color: c.tickColor } }
+            }
+        }
+    });
+}
+
+// ---- 5. PAGAS VS PENDENTES (doughnut) ----
+function buildPaidChart() {
+    const pago = <?= json_encode($paidTotal) ?>;
+    const pendente = <?= json_encode($pendingTotal) ?>;
+    const canvas = document.getElementById('paidChart');
+    const emptyEl = document.getElementById('paidEmpty');
+
+    if (pago === 0 && pendente === 0) {
+        canvas.style.display = 'none';
+        emptyEl.style.display = 'block';
+        return;
+    }
+    canvas.style.display = '';
+    emptyEl.style.display = 'none';
+
+    const light = document.body.classList.contains('light');
+
+    destroyChart('paid');
+    chartInstances.paid = new Chart(canvas.getContext('2d'), {
+        type: 'doughnut',
+        data: {
+            labels: ['Pagas', 'Pendentes'],
+            datasets: [{
+                data: [pago, pendente],
+                backgroundColor: [
+                    light ? 'rgba(5,150,105,0.2)' : 'rgba(0,255,136,0.2)',
+                    light ? 'rgba(220,38,38,0.2)' : 'rgba(255,45,85,0.2)',
+                ],
+                borderColor: [
+                    light ? '#059669' : '#00ff88',
+                    light ? '#dc2626' : '#ff2d55',
+                ],
+                borderWidth: 2,
+                hoverOffset: 8,
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            cutout: '60%',
+            plugins: {
+                legend: {
+                    position: 'bottom',
+                    labels: {
+                        usePointStyle: true,
+                        padding: 12,
+                        font: { family: 'Sora', size: 11 },
+                        color: getChartColors().tickColor,
+                    }
+                },
+                tooltip: {
+                    callbacks: {
+                        label: ctx => {
+                            const total = ctx.dataset.data.reduce((a,b) => a+b, 0);
+                            const pct = total > 0 ? ((ctx.parsed / total) * 100).toFixed(1) : '0.0';
                             return ` R$ ${ctx.parsed.toLocaleString('pt-BR', {minimumFractionDigits:2})} (${pct}%)`;
                         }
                     }
