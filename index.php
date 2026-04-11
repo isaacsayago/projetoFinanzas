@@ -13,14 +13,14 @@
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
         :root {
-            --ink: #0d1117;
-            --paper: #f5f3ef;
-            --card: #ffffff;
-            --accent: #2563eb;
-            --accent-light: #dbeafe;
-            --danger: #dc2626;
-            --muted: #6b7280;
-            --border: #e5e7eb;
+            --ink: #e2e8f0;
+            --paper: #06080f;
+            --card: #0d1117;
+            --accent: #00d4ff;
+            --accent-hover: #00b8e6;
+            --danger: #ff2d55;
+            --muted: #64748b;
+            --border: rgba(255,255,255,0.08);
         }
 
         body {
@@ -34,26 +34,24 @@
             position: relative;
         }
 
-        /* Background decorativo */
         body::before {
             content: '';
             position: fixed;
             inset: 0;
             background:
-                radial-gradient(ellipse 80% 60% at 20% 10%, rgba(37,99,235,0.07) 0%, transparent 60%),
-                radial-gradient(ellipse 60% 50% at 80% 90%, rgba(37,99,235,0.05) 0%, transparent 60%);
+                radial-gradient(ellipse 80% 60% at 20% 10%, rgba(0,212,255,0.07) 0%, transparent 60%),
+                radial-gradient(ellipse 60% 50% at 80% 90%, rgba(255,45,85,0.05) 0%, transparent 60%);
             pointer-events: none;
         }
 
-        /* Grid de fundo */
         body::after {
             content: '';
             position: fixed;
             inset: 0;
             background-image:
-                linear-gradient(rgba(0,0,0,0.04) 1px, transparent 1px),
-                linear-gradient(90deg, rgba(0,0,0,0.04) 1px, transparent 1px);
-            background-size: 48px 48px;
+                linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px);
+            background-size: 60px 60px;
             pointer-events: none;
         }
 
@@ -79,16 +77,17 @@
         .brand-icon {
             width: 56px;
             height: 56px;
-            background: var(--accent);
+            background: rgba(0,212,255,0.12);
+            border: 1px solid rgba(0,212,255,0.25);
             border-radius: 16px;
             display: inline-flex;
             align-items: center;
             justify-content: center;
             margin-bottom: 12px;
-            box-shadow: 0 8px 24px rgba(37,99,235,0.25);
+            box-shadow: 0 0 30px rgba(0,212,255,0.2);
         }
 
-        .brand-icon svg { width: 28px; height: 28px; color: #fff; }
+        .brand-icon svg { width: 28px; height: 28px; color: var(--accent); }
 
         .brand h1 {
             font-family: 'Space Mono', monospace;
@@ -108,11 +107,8 @@
             background: var(--card);
             border-radius: 20px;
             padding: 32px;
-            box-shadow:
-                0 1px 0 0 rgba(0,0,0,0.05),
-                0 4px 16px rgba(0,0,0,0.06),
-                0 16px 48px rgba(0,0,0,0.04);
-            border: 1px solid var(--border);
+            box-shadow: 0 24px 64px rgba(0,0,0,0.3), 0 0 40px rgba(0,212,255,0.04);
+            border: 1px solid rgba(0,212,255,0.1);
         }
 
         .card h2 {
@@ -123,8 +119,8 @@
         }
 
         .alert-danger {
-            background: #fef2f2;
-            border: 1px solid #fecaca;
+            background: rgba(255,45,85,0.1);
+            border: 1px solid rgba(255,45,85,0.25);
             color: var(--danger);
             padding: 10px 14px;
             border-radius: 10px;
@@ -169,14 +165,14 @@
             font-family: 'Sora', sans-serif;
             font-size: 14px;
             color: var(--ink);
-            background: #fff;
+            background: rgba(22,27,38,0.8);
             transition: border-color 0.2s, box-shadow 0.2s;
         }
 
         .input-wrap input:focus {
             outline: none;
             border-color: var(--accent);
-            box-shadow: 0 0 0 3px rgba(37,99,235,0.1);
+            box-shadow: 0 0 0 3px rgba(0,212,255,0.1), 0 0 20px rgba(0,212,255,0.08);
         }
 
         .remember {
@@ -203,7 +199,7 @@
             width: 100%;
             padding: 13px;
             background: var(--accent);
-            color: #fff;
+            color: #0a0e1a;
             border: none;
             border-radius: 10px;
             font-family: 'Sora', sans-serif;
@@ -215,9 +211,9 @@
         }
 
         .btn-login:hover {
-            background: #1d4ed8;
+            background: var(--accent-hover);
             transform: translateY(-1px);
-            box-shadow: 0 4px 12px rgba(37,99,235,0.3);
+            box-shadow: 0 4px 20px rgba(0,212,255,0.35);
         }
 
         .btn-login:active {
