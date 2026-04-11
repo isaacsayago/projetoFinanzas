@@ -102,7 +102,39 @@ if ($action === 'edit' && isset($_GET['id'])) {
 }
 
 // -------------------- AÇÕES POST --------------------
+$senha_msg = '';
+$senha_msg_type = '';
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+
+    // Alterar senha do próprio usuário
+    if (isset($_POST['action_change_password'])) {
+        $senha_atual = $_POST['senha_atual'] ?? '';
+        $nova_senha = $_POST['nova_senha'] ?? '';
+        $confirma_senha = $_POST['confirma_senha'] ?? '';
+
+        $stmt = $pdo->prepare("SELECT senha FROM usuarios WHERE id = :id");
+        $stmt->execute([':id' => $current_user_id]);
+        $user = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!$user || !password_verify($senha_atual, $user['senha'])) {
+            $senha_msg = 'Senha atual incorreta.';
+            $senha_msg_type = 'error';
+        } elseif (strlen($nova_senha) < 6) {
+            $senha_msg = 'Nova senha deve ter ao menos 6 caracteres.';
+            $senha_msg_type = 'error';
+        } elseif ($nova_senha !== $confirma_senha) {
+            $senha_msg = 'A confirmação não coincide com a nova senha.';
+            $senha_msg_type = 'error';
+        } else {
+            $hash = password_hash($nova_senha, PASSWORD_DEFAULT);
+            $pdo->prepare("UPDATE usuarios SET senha = :senha WHERE id = :id")
+                ->execute([':senha' => $hash, ':id' => $current_user_id]);
+            $senha_msg = 'Senha alterada com sucesso!';
+            $senha_msg_type = 'success';
+        }
+    }
+
     if (isset($_POST['edit_id']) && $_POST['edit_id'] !== '') {
         $id = (int)$_POST['edit_id'];
         $name = trim($_POST['name_single'] ?? '');
@@ -1195,6 +1227,12 @@ body.light ::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
             </div>
         </div>
         <div class="sidebar-actions">
+            <a href="#" class="sidebar-action" onclick="document.getElementById('passwordModal').classList.add('open'); return false;">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+                </svg>
+                <span>Minha conta</span>
+            </a>
             <?php if ($is_admin): ?>
             <a href="usuarios.php" class="sidebar-action">
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
@@ -1597,6 +1635,45 @@ body.light ::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
     </div>
 </div>
 
+<!-- ===== MODAL ALTERAR SENHA ===== -->
+<div class="modal-overlay" id="passwordModal" onclick="if(event.target===this) this.classList.remove('open')">
+    <div class="modal" style="max-width:420px;">
+        <div class="modal-header">
+            <span class="modal-title">Alterar minha senha</span>
+            <button class="modal-close" onclick="document.getElementById('passwordModal').classList.remove('open')">&times;</button>
+        </div>
+        <form method="post" action="">
+            <input type="hidden" name="action_change_password" value="1">
+            <div class="modal-body">
+                <?php if ($senha_msg): ?>
+                <div style="padding:10px 14px;border-radius:10px;font-size:13px;margin-bottom:16px;
+                    background:<?= $senha_msg_type === 'success' ? 'rgba(0,255,136,0.1)' : 'rgba(255,45,85,0.1)' ?>;
+                    color:<?= $senha_msg_type === 'success' ? 'var(--success)' : 'var(--danger)' ?>;
+                    border:1px solid <?= $senha_msg_type === 'success' ? 'rgba(0,255,136,0.25)' : 'rgba(255,45,85,0.25)' ?>;">
+                    <?= safe($senha_msg) ?>
+                </div>
+                <?php endif; ?>
+                <div style="margin-bottom:14px;">
+                    <label style="display:block;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;color:var(--muted);margin-bottom:4px;">Senha atual</label>
+                    <input type="password" name="senha_atual" required style="width:100%;padding:9px 10px;border:1.5px solid var(--border);border-radius:8px;font-family:'Sora',sans-serif;font-size:13px;color:var(--ink);background:var(--surface2);">
+                </div>
+                <div style="margin-bottom:14px;">
+                    <label style="display:block;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;color:var(--muted);margin-bottom:4px;">Nova senha</label>
+                    <input type="password" name="nova_senha" required minlength="6" style="width:100%;padding:9px 10px;border:1.5px solid var(--border);border-radius:8px;font-family:'Sora',sans-serif;font-size:13px;color:var(--ink);background:var(--surface2);">
+                </div>
+                <div style="margin-bottom:6px;">
+                    <label style="display:block;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;color:var(--muted);margin-bottom:4px;">Confirmar nova senha</label>
+                    <input type="password" name="confirma_senha" required minlength="6" style="width:100%;padding:9px 10px;border:1.5px solid var(--border);border-radius:8px;font-family:'Sora',sans-serif;font-size:13px;color:var(--ink);background:var(--surface2);">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn-add-row" onclick="document.getElementById('passwordModal').classList.remove('open')">Cancelar</button>
+                <button type="submit" class="btn-save">Alterar senha</button>
+            </div>
+        </form>
+    </div>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
 // ===== TEMA (dark padrão, light alternativo) =====
@@ -1761,6 +1838,11 @@ function buildPieChart() {
 }
 
 buildCharts();
+
+// Abrir modal de senha se houve mensagem
+<?php if ($senha_msg): ?>
+document.getElementById('passwordModal').classList.add('open');
+<?php endif; ?>
 
 // Add entry row
 function addEntryRow() {
