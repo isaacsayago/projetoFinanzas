@@ -1,14 +1,16 @@
 -- ============================================================
 -- Finanzas — Módulo de Cartões de Crédito + Compartilhamento
--- Executar no banco `financeiro`
+-- IMPORTANTE: Use install.php em vez de rodar este SQL diretamente!
+-- Este arquivo é mantido apenas como referência do schema.
 -- ============================================================
 
 USE financeiro;
 
 -- Cartões de Crédito
+-- usuarios.id = INT(10) UNSIGNED, expenses.id = INT(11)
 CREATE TABLE IF NOT EXISTS credit_cards (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    user_id INT NOT NULL,
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    user_id INT(10) UNSIGNED NOT NULL,
     nome VARCHAR(100) NOT NULL,
     armazenar_dados TINYINT(1) DEFAULT 0,
     numero_encrypted VARBINARY(512) NULL,
@@ -19,9 +21,9 @@ CREATE TABLE IF NOT EXISTS credit_cards (
     iv VARBINARY(16) NULL,
     titular VARCHAR(100) NOT NULL,
     limite DECIMAL(12,2) NOT NULL,
-    dia_vencimento TINYINT NOT NULL,
-    dia_fechamento TINYINT NOT NULL,
-    cartao_adicional_de INT NULL,
+    dia_vencimento TINYINT UNSIGNED NOT NULL,
+    dia_fechamento TINYINT UNSIGNED NOT NULL,
+    cartao_adicional_de INT UNSIGNED NULL,
     ativo TINYINT(1) DEFAULT 1,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_cc_user (user_id),
@@ -32,9 +34,9 @@ CREATE TABLE IF NOT EXISTS credit_cards (
 
 -- Vínculo entre despesas e cartões (controle de fatura)
 CREATE TABLE IF NOT EXISTS expense_card_link (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    expense_id INT NOT NULL,
-    card_id INT NOT NULL,
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    expense_id INT(11) NOT NULL,
+    card_id INT UNSIGNED NOT NULL,
     fatura_period VARCHAR(7) NOT NULL,
     UNIQUE KEY uk_ecl_expense (expense_id),
     INDEX idx_ecl_card_fatura (card_id, fatura_period),
@@ -44,9 +46,9 @@ CREATE TABLE IF NOT EXISTS expense_card_link (
 
 -- Compartilhamento de conta (convites)
 CREATE TABLE IF NOT EXISTS account_shares (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    owner_id INT NOT NULL,
-    invitee_id INT NOT NULL,
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    owner_id INT(10) UNSIGNED NOT NULL,
+    invitee_id INT(10) UNSIGNED NOT NULL,
     status ENUM('pending','accepted','rejected') DEFAULT 'pending',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     responded_at TIMESTAMP NULL,
@@ -59,10 +61,10 @@ CREATE TABLE IF NOT EXISTS account_shares (
 
 -- Permissões granulares de compartilhamento
 CREATE TABLE IF NOT EXISTS share_permissions (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    share_id INT NOT NULL,
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    share_id INT UNSIGNED NOT NULL,
     resource_type ENUM('card','expense','income','all') NOT NULL,
-    resource_id INT NULL,
+    resource_id INT UNSIGNED NULL,
     can_view TINYINT(1) DEFAULT 1,
     can_edit TINYINT(1) DEFAULT 0,
     INDEX idx_sp_share (share_id),
@@ -71,13 +73,13 @@ CREATE TABLE IF NOT EXISTS share_permissions (
 
 -- Notificações in-platform
 CREATE TABLE IF NOT EXISTS notifications (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    user_id INT NOT NULL,
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    user_id INT(10) UNSIGNED NOT NULL,
     tipo VARCHAR(50) NOT NULL,
     mensagem TEXT NOT NULL,
     link VARCHAR(255) NULL,
     lida TINYINT(1) DEFAULT 0,
-    ref_id INT NULL,
+    ref_id INT UNSIGNED NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_notif_user_lida (user_id, lida),
     FOREIGN KEY (user_id) REFERENCES usuarios(id) ON DELETE CASCADE
