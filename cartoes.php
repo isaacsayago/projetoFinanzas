@@ -118,6 +118,53 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $msg = "Status do cartão atualizado!"; $msgType = 'success';
         }
     }
+
+    // Excluir cartão (remove vínculos e o cartão)
+    if (isset($_POST['action_card']) && $_POST['action_card'] === 'delete_card') {
+        $card_id = (int)($_POST['card_id'] ?? 0);
+        if ($card_id) {
+            // Verificar propriedade
+            $chk = $pdo->prepare("SELECT id FROM credit_cards WHERE id=:id AND user_id=:uid");
+            $chk->execute([':id'=>$card_id, ':uid'=>$current_user_id]);
+            if ($chk->fetch()) {
+                // Desvincular cartões adicionais (apontar para null)
+                $pdo->prepare("UPDATE credit_cards SET cartao_adicional_de = NULL WHERE cartao_adicional_de = :id")
+                    ->execute([':id'=>$card_id]);
+                // Remover vínculos expense_card_link (as expenses continuam existindo, apenas sem cartão)
+                $pdo->prepare("DELETE FROM expense_card_link WHERE card_id = :id")
+                    ->execute([':id'=>$card_id]);
+                // Remover cartão
+                $pdo->prepare("DELETE FROM credit_cards WHERE id=:id AND user_id=:uid")
+                    ->execute([':id'=>$card_id, ':uid'=>$current_user_id]);
+                $msg = "Cartão excluído com sucesso!"; $msgType = 'success';
+                // Redirecionar para listagem
+                header("Location: cartoes.php"); exit;
+            } else {
+                $msg = "Cartão não encontrado."; $msgType = 'error';
+            }
+        }
+    }
+
+    // Excluir lançamento individual de um cartão
+    if (isset($_POST['action_card']) && $_POST['action_card'] === 'delete_expense') {
+        $expense_id = (int)($_POST['expense_id'] ?? 0);
+        $card_view = (int)($_POST['card_view'] ?? 0);
+        if ($expense_id) {
+            // Verificar se a despesa pertence ao usuário
+            $chk = $pdo->prepare("SELECT id FROM expenses WHERE id=:id AND user_id=:uid");
+            $chk->execute([':id'=>$expense_id, ':uid'=>$current_user_id]);
+            if ($chk->fetch()) {
+                // Remover vínculo com cartão
+                $pdo->prepare("DELETE FROM expense_card_link WHERE expense_id = :id")
+                    ->execute([':id'=>$expense_id]);
+                // Remover a despesa
+                $pdo->prepare("DELETE FROM expenses WHERE id=:id AND user_id=:uid")
+                    ->execute([':id'=>$expense_id, ':uid'=>$current_user_id]);
+                $msg = "Lançamento excluído!"; $msgType = 'success';
+            }
+        }
+        if ($card_view) { header("Location: cartoes.php?view={$card_view}"); exit; }
+    }
 }
 
 // -------------------- DADOS --------------------
@@ -681,12 +728,19 @@ body.light .topbar { background: var(--surface); backdrop-filter: none; }
                     <?php endif; ?>
                 </table>
 
-                <div style="margin-top:16px; display:flex; gap:8px;">
+                <div style="margin-top:16px; display:flex; gap:8px; flex-wrap:wrap;">
                     <form method="post" style="display:inline;">
                         <input type="hidden" name="action_card" value="toggle_status">
                         <input type="hidden" name="card_id" value="<?= $viewCard['id'] ?>">
                         <button type="submit" class="btn-cancel" onclick="return confirm('<?= $viewCard['ativo'] ? 'Desativar' : 'Ativar' ?> este cartão?')">
                             <?= $viewCard['ativo'] ? 'Desativar' : 'Ativar' ?> cartão
+                        </button>
+                    </form>
+                    <form method="post" style="display:inline;">
+                        <input type="hidden" name="action_card" value="delete_card">
+                        <input type="hidden" name="card_id" value="<?= $viewCard['id'] ?>">
+                        <button type="submit" class="btn-cancel" style="color:var(--danger);border-color:rgba(255,45,85,0.3);" onclick="return confirm('Tem certeza que deseja EXCLUIR este cartão? Os lançamentos vinculados serão desvinculados mas não apagados.')">
+                            Excluir cartão
                         </button>
                     </form>
                 </div>
@@ -738,7 +792,7 @@ body.light .topbar { background: var(--surface); backdrop-filter: none; }
             <?php if ($viewCompras): ?>
             <div class="detail-panel" style="overflow-x:auto;">
                 <table class="data-table">
-                    <thead><tr><th>Descrição</th><th>Valor</th><th>Data</th><th>Fatura</th><th>Status</th></tr></thead>
+                    <thead><tr><th>Descrição</th><th>Valor</th><th>Data</th><th>Fatura</th><th>Status</th><th></th></tr></thead>
                     <tbody>
                     <?php foreach ($viewCompras as $compra): ?>
                     <tr>
@@ -753,6 +807,18 @@ body.light .topbar { background: var(--surface); backdrop-filter: none; }
                             echo $dt ? mb_strtoupper($dt->format('M/Y'), 'UTF-8') : $compra['fatura_period'];
                         ?></td>
                         <td><span class="badge <?= $compra['paid'] ? 'paid' : 'unpaid' ?>"><?= $compra['paid'] ? 'Pago' : 'Pendente' ?></span></td>
+                        <td>
+                            <form method="post" style="display:inline;">
+                                <input type="hidden" name="action_card" value="delete_expense">
+                                <input type="hidden" name="expense_id" value="<?= (int)$compra['id'] ?>">
+                                <input type="hidden" name="card_view" value="<?= $viewCard['id'] ?>">
+                                <button type="submit" title="Excluir lançamento" onclick="return confirm('Excluir este lançamento do cartão?')" style="width:28px;height:28px;border-radius:6px;border:1px solid rgba(255,45,85,0.2);background:rgba(255,45,85,0.08);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;transition:all 0.15s;color:var(--danger);">
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;">
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                    </svg>
+                                </button>
+                            </form>
+                        </td>
                     </tr>
                     <?php endforeach; ?>
                     </tbody>
