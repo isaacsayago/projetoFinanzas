@@ -6,6 +6,7 @@ if (!isset($_SESSION['id'])) {
 }
 
 require_once 'conexao_pdo.php';
+require_once 'fatura_helper.php';
 $current_user_id = $_SESSION['id'];
 $current_user_name = $_SESSION['nome'] ?? 'Usuário';
 $is_admin = isset($_SESSION['nivel']) && $_SESSION['nivel'] === 'adm';
@@ -153,6 +154,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if (isset($_POST['name']) && is_array($_POST['name'])) {
         $stmt = $pdo->prepare("INSERT INTO expenses (user_id, name, amount, due_date, type, planned, period) VALUES (:user_id, :name, :amount, :due_date, :type, :planned, :period)");
+        $stmtCardLink = $pdo->prepare("INSERT INTO expense_card_link (expense_id, card_id, fatura_period) VALUES (:eid, :cid, :fatura)");
+
         foreach ($_POST['name'] as $i => $n) {
             $n = trim($n);
             $a = str_replace(',', '.', trim($_POST['amount'][$i] ?? ''));
@@ -161,6 +164,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $planned = isset($_POST['planned'][$i]) && $_POST['planned'][$i] === '1' ? 1 : 0;
             $parcelas = isset($_POST['parcelas'][$i]) ? (int)$_POST['parcelas'][$i] : 0;
             $parcelado = isset($_POST['parcelado'][$i]) && $_POST['parcelado'][$i] === '1' && $parcelas > 1;
+            $cardId = isset($_POST['card_id'][$i]) && $_POST['card_id'][$i] !== '' ? (int)$_POST['card_id'][$i] : null;
+
+            // Buscar dia de fechamento do cartão selecionado
+            $diaFechamento = null;
+            if ($cardId) {
+                $stmtFech = $pdo->prepare("SELECT dia_fechamento FROM credit_cards WHERE id=:id AND user_id=:uid");
+                $stmtFech->execute([':id'=>$cardId, ':uid'=>$current_user_id]);
+                $diaFechamento = (int)$stmtFech->fetchColumn();
+            }
 
             if ($n && $a && $d && is_numeric($a)) {
                 if ($parcelado) {
@@ -170,7 +182,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $parcelDate = clone $baseDate;
                         if ($p > 1) {
                             $parcelDate->modify('+' . ($p - 1) . ' months');
-                            // Ajuste para meses curtos
                             $originalDay = (int)$baseDate->format('d');
                             $lastDayOfMonth = (int)$parcelDate->format('t');
                             if ($originalDay > $lastDayOfMonth) {
@@ -179,9 +190,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         }
                         $parcelDateStr = $parcelDate->format('Y-m-d');
                         $stmt->execute([':user_id'=>$current_user_id,':name'=>$nomeParcela,':amount'=>$a,':due_date'=>$parcelDateStr,':type'=>$type,':planned'=>$planned,':period'=>$parcelDate->format('Y-m')]);
+
+                        if ($cardId && $diaFechamento) {
+                            $expenseId = $pdo->lastInsertId();
+                            $faturaPeriod = calcularFaturaPeriod($parcelDateStr, $diaFechamento);
+                            $stmtCardLink->execute([':eid'=>$expenseId, ':cid'=>$cardId, ':fatura'=>$faturaPeriod]);
+                        }
                     }
                 } else {
                     $stmt->execute([':user_id'=>$current_user_id,':name'=>$n,':amount'=>$a,':due_date'=>$d,':type'=>$type,':planned'=>$planned,':period'=>(new DateTime($d))->format('Y-m')]);
+
+                    if ($cardId && $diaFechamento) {
+                        $expenseId = $pdo->lastInsertId();
+                        $faturaPeriod = calcularFaturaPeriod($d, $diaFechamento);
+                        $stmtCardLink->execute([':eid'=>$expenseId, ':cid'=>$cardId, ':fatura'=>$faturaPeriod]);
+                    }
                 }
             }
         }
@@ -245,6 +268,12 @@ if ($selectedPeriod !== 'all') {
 $expenseRows = array_filter($rows, fn($r) => ($r['type'] ?? 'expense') === 'expense');
 $incomeRows  = array_filter($rows, fn($r) => ($r['type'] ?? 'expense') === 'income');
 
+// ---- Dados de cartões de crédito ----
+$cardMetrics = getConsolidatedCardMetrics($pdo, $current_user_id);
+$userCardsStmt = $pdo->prepare("SELECT id, nome FROM credit_cards WHERE user_id = :uid AND ativo = 1 ORDER BY nome ASC");
+$userCardsStmt->execute([':uid' => $current_user_id]);
+$userCards = $userCardsStmt->fetchAll(PDO::FETCH_ASSOC);
+
 // ---- Dados para gráfico "Top Despesas" ----
 if ($selectedPeriod !== 'all') {
     $topStmt = $pdo->prepare("SELECT name, SUM(amount) as total FROM expenses WHERE type='expense' AND period=:period AND user_id=:uid GROUP BY name ORDER BY total DESC LIMIT 7");
@@ -289,6 +318,9 @@ $pendingTotal = (float)($paidData['pendente'] ?? 0);
     --accent: #00d4ff;
     --accent-hover: #00b8e6;
     --accent-light: rgba(0,212,255,0.1);
+    --purple: #a855f7;
+    --purple-light: rgba(168,85,247,0.1);
+    --glow-purple: 0 0 20px rgba(168,85,247,0.15);
     --success: #00ff88;
     --success-light: rgba(0,255,136,0.1);
     --danger: #ff2d55;
@@ -610,6 +642,9 @@ body::after {
 .stat-card.neutral::before { background: linear-gradient(90deg, var(--muted), transparent); }
 .stat-card.accent::before { background: linear-gradient(90deg, var(--accent), transparent); }
 .stat-card.success::before { background: linear-gradient(90deg, var(--success), transparent); }
+.stat-card.purple { border-color: rgba(168,85,247,0.2); }
+.stat-card.purple:hover { box-shadow: var(--glow-purple); }
+.stat-card.purple::before { background: linear-gradient(90deg, var(--purple), transparent); }
 
 .stat-label {
     font-size: 11px;
@@ -649,6 +684,7 @@ body::after {
 .stat-card.neutral .stat-icon { background: var(--surface2); color: var(--muted); }
 .stat-card.accent .stat-icon { background: rgba(0,212,255,0.12); color: var(--accent); }
 .stat-card.success .stat-icon { background: rgba(0,255,136,0.12); color: var(--success); }
+.stat-card.purple .stat-icon { background: rgba(168,85,247,0.12); color: var(--purple); }
 
 /* ===== CHARTS GRID ===== */
 .charts-grid {
@@ -801,15 +837,18 @@ body.light .stat-card.warning { border-color: var(--border); }
 body.light .stat-card.neutral { border-color: var(--border); }
 body.light .stat-card.accent { border-color: var(--border); }
 body.light .stat-card.success { border-color: var(--border); }
+body.light .stat-card.purple { border-color: var(--border); }
 body.light .stat-card.danger::before { background: var(--danger); }
 body.light .stat-card.warning::before { background: var(--warning); }
 body.light .stat-card.accent::before { background: var(--accent); }
 body.light .stat-card.success::before { background: var(--success); }
+body.light .stat-card.purple::before { background: var(--purple, #7c3aed); }
 
 body.light .stat-card.danger .stat-icon { background: var(--danger-light); color: var(--danger); }
 body.light .stat-card.warning .stat-icon { background: var(--warning-light); color: var(--warning); }
 body.light .stat-card.accent .stat-icon { background: var(--accent-light); color: var(--accent); }
 body.light .stat-card.success .stat-icon { background: var(--success-light); color: var(--success); }
+body.light .stat-card.purple .stat-icon { background: rgba(124,58,237,0.1); color: #7c3aed; }
 
 body.light .chart-card { border-color: var(--border); }
 body.light .neon-border::after { opacity: 0.04; }
@@ -1068,7 +1107,7 @@ body.light .modal-overlay { background: rgba(0,0,0,0.3); }
 
 .entry-row {
     display: grid;
-    grid-template-columns: 2fr 1fr 1fr 1fr 1fr auto;
+    grid-template-columns: 2fr 1fr 1fr 1fr 1fr auto auto 1fr auto;
     gap: 8px;
     margin-bottom: 8px;
     align-items: end;
@@ -1288,6 +1327,18 @@ body.light ::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
             </div>
         </div>
         <div class="sidebar-actions">
+            <a href="cartoes.php" class="sidebar-action">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+                </svg>
+                <span>Cartões</span>
+            </a>
+            <a href="compartilhamento.php" class="sidebar-action">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+                <span>Compartilhamento</span>
+            </a>
             <a href="#" class="sidebar-action" onclick="document.getElementById('passwordModal').classList.add('open'); return false;">
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
@@ -1333,6 +1384,21 @@ body.light ::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
                 Importar mês anterior
             </a>
             <?php endif; ?>
+            <div class="notif-wrapper" style="position:relative;">
+                <button class="btn-theme-toggle" id="notifBell" title="Notificações" onclick="toggleNotifPanel()" style="width:36px;height:36px;border-radius:8px;border:1px solid var(--border);background:var(--surface2);cursor:pointer;font-size:16px;position:relative;">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;color:var(--ink);">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+                    </svg>
+                    <span id="notifBadge" style="display:none;position:absolute;top:-4px;right:-4px;width:18px;height:18px;border-radius:50%;background:var(--danger);color:#fff;font-size:10px;font-weight:700;line-height:18px;text-align:center;"></span>
+                </button>
+                <div class="notif-panel" id="notifPanel" style="display:none;position:absolute;top:44px;right:0;width:320px;max-height:400px;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:12px;box-shadow:0 12px 40px rgba(0,0,0,0.3);z-index:100;padding:0;">
+                    <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;">
+                        <span style="font-size:13px;font-weight:700;">Notificações</span>
+                        <button onclick="markAllNotifRead()" style="font-size:11px;color:var(--accent);background:none;border:none;cursor:pointer;font-family:'Sora',sans-serif;">Marcar todas como lidas</button>
+                    </div>
+                    <div id="notifList" style="padding:8px;"></div>
+                </div>
+            </div>
             <button class="btn-theme-toggle" id="themeToggle" title="Alternar tema" onclick="toggleTheme()">
                 <span id="themeIcon">🌙</span>
             </button>
@@ -1391,6 +1457,47 @@ body.light ::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
                 </div>
             </div>
         </div>
+
+        <!-- CARD STAT CARDS (consolidado de cartões) -->
+        <?php if ($cardMetrics['qtd_cartoes'] > 0): ?>
+        <div class="stat-grid" style="grid-template-columns: repeat(5, 1fr); margin-bottom: 24px;">
+            <div class="stat-card purple">
+                <div class="stat-label">Limite cartões</div>
+                <div class="stat-value"><?= money($cardMetrics['limite_total']) ?></div>
+                <div class="stat-icon">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" /></svg>
+                </div>
+            </div>
+            <div class="stat-card danger">
+                <div class="stat-label">Comprometido</div>
+                <div class="stat-value"><?= money($cardMetrics['usado_total']) ?></div>
+                <div class="stat-icon">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M13 17h8m0 0V9m0 8l-8-8-4 4-6-6" /></svg>
+                </div>
+            </div>
+            <div class="stat-card success">
+                <div class="stat-label">Disponível cartões</div>
+                <div class="stat-value"><?= money($cardMetrics['disponivel_total']) ?></div>
+                <div class="stat-icon">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                </div>
+            </div>
+            <div class="stat-card accent">
+                <div class="stat-label">Cartões ativos</div>
+                <div class="stat-value"><?= $cardMetrics['qtd_cartoes'] ?></div>
+                <div class="stat-icon">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" /></svg>
+                </div>
+            </div>
+            <div class="stat-card <?= $cardMetrics['percentual_geral'] > 80 ? 'danger' : ($cardMetrics['percentual_geral'] > 50 ? 'warning' : 'accent') ?>">
+                <div class="stat-label">% Utilização</div>
+                <div class="stat-value"><?= number_format($cardMetrics['percentual_geral'], 1, ',', '.') ?>%</div>
+                <div class="stat-icon">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M11 3.055A9.001 9.001 0 1020.945 13H11V3.055z" /><path stroke-linecap="round" stroke-linejoin="round" d="M20.488 9H15V3.512A9.025 9.025 0 0120.488 9z" /></svg>
+                </div>
+            </div>
+        </div>
+        <?php endif; ?>
 
         <!-- CHARTS GRID -->
         <div class="charts-grid">
@@ -1733,6 +1840,19 @@ body.light ::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
                             <label>Parcelas</label>
                             <input name="parcelas[]" type="number" min="2" max="99" value="2" style="width:70px;">
                         </div>
+                        <?php if ($userCards): ?>
+                        <div>
+                            <label>Cartão</label>
+                            <select name="card_id[]">
+                                <option value="">Nenhum</option>
+                                <?php foreach ($userCards as $uc): ?>
+                                <option value="<?= $uc['id'] ?>"><?= safe($uc['nome']) ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <?php else: ?>
+                        <input type="hidden" name="card_id[]" value="">
+                        <?php endif; ?>
                         <div style="padding-bottom:1px;">
                             <label style="visibility:hidden">x</label>
                             <button type="button" class="btn-icon del" onclick="removeEntryRow(this)" style="width:36px;height:36px;">
@@ -2185,8 +2305,87 @@ document.addEventListener('keydown', e => {
     }
     if (e.key === 'Escape') {
         document.getElementById('addModal').classList.remove('open');
+        document.getElementById('notifPanel').style.display = 'none';
     }
 });
+
+// ===== NOTIFICAÇÕES =====
+function toggleNotifPanel() {
+    const panel = document.getElementById('notifPanel');
+    if (panel.style.display === 'none') {
+        panel.style.display = 'block';
+        loadNotifications();
+    } else {
+        panel.style.display = 'none';
+    }
+}
+
+document.addEventListener('click', e => {
+    const wrapper = document.querySelector('.notif-wrapper');
+    if (wrapper && !wrapper.contains(e.target)) {
+        document.getElementById('notifPanel').style.display = 'none';
+    }
+});
+
+function loadNotifCount() {
+    fetch('notificacoes_api.php?action=count')
+        .then(r => r.json())
+        .then(d => {
+            const badge = document.getElementById('notifBadge');
+            if (d.count > 0) {
+                badge.textContent = d.count > 9 ? '9+' : d.count;
+                badge.style.display = 'block';
+            } else {
+                badge.style.display = 'none';
+            }
+        })
+        .catch(() => {});
+}
+
+function loadNotifications() {
+    fetch('notificacoes_api.php?action=list&limit=15')
+        .then(r => r.json())
+        .then(d => {
+            const list = document.getElementById('notifList');
+            if (!d.notifications || d.notifications.length === 0) {
+                list.innerHTML = '<p style="padding:20px;text-align:center;color:var(--muted);font-size:12px;">Nenhuma notificação</p>';
+                return;
+            }
+            list.innerHTML = d.notifications.map(n => `
+                <div style="padding:10px 12px;border-radius:8px;margin-bottom:4px;background:${n.lida ? 'transparent' : 'rgba(0,212,255,0.05)'};cursor:pointer;transition:background 0.15s;" onclick="markNotifRead(${n.id})" onmouseover="this.style.background='rgba(255,255,255,0.05)'" onmouseout="this.style.background='${n.lida ? 'transparent' : 'rgba(0,212,255,0.05)'}'">
+                    <div style="font-size:12px;font-weight:${n.lida ? '400' : '600'};margin-bottom:2px;">${escHtml(n.mensagem)}</div>
+                    <div style="font-size:10px;color:var(--muted);">${new Date(n.created_at).toLocaleDateString('pt-BR')} ${new Date(n.created_at).toLocaleTimeString('pt-BR', {hour:'2-digit',minute:'2-digit'})}</div>
+                </div>
+            `).join('');
+        })
+        .catch(() => {});
+}
+
+function markNotifRead(id) {
+    fetch('notificacoes_api.php', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({action: 'mark_read', id: id})
+    }).then(() => { loadNotifCount(); loadNotifications(); });
+}
+
+function markAllNotifRead() {
+    fetch('notificacoes_api.php', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({action: 'mark_all_read'})
+    }).then(() => { loadNotifCount(); loadNotifications(); });
+}
+
+function escHtml(s) {
+    const d = document.createElement('div');
+    d.textContent = s;
+    return d.innerHTML;
+}
+
+// Carregar contagem de notificações ao iniciar e a cada 60s
+loadNotifCount();
+setInterval(loadNotifCount, 60000);
 </script>
 </body>
 </html>
