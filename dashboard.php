@@ -378,7 +378,7 @@ $pendingTotal = (float)($paidData['pendente'] ?? 0);
     --glow-danger: 0 0 20px rgba(255,45,85,0.15);
     --glow-success: 0 0 20px rgba(0,255,136,0.15);
     --glow-warning: 0 0 20px rgba(255,214,0,0.15);
-    --sidebar-w: 240px;
+    --sidebar-w: 180px;
     --radius: 12px;
 }
 
@@ -432,16 +432,16 @@ body::after {
 }
 
 .sidebar-logo {
-    padding: 20px;
+    padding: 14px 12px;
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
     border-bottom: 1px solid rgba(255,255,255,0.07);
 }
 
 .sidebar-logo-icon {
-    width: 36px;
-    height: 36px;
+    width: 30px;
+    height: 30px;
     background: rgba(0,212,255,0.15);
     border: 1px solid rgba(0,212,255,0.3);
     border-radius: 10px;
@@ -452,18 +452,18 @@ body::after {
     box-shadow: 0 0 15px rgba(0,212,255,0.2);
 }
 
-.sidebar-logo-icon svg { width: 20px; height: 20px; color: var(--accent); }
+.sidebar-logo-icon svg { width: 16px; height: 16px; color: var(--accent); }
 
 .sidebar-logo-text {
     font-family: 'Space Mono', monospace;
-    font-size: 16px;
+    font-size: 14px;
     font-weight: 700;
     color: #fff;
     white-space: nowrap;
 }
 
 .sidebar-section {
-    padding: 16px 12px 4px;
+    padding: 12px 8px 4px;
 }
 
 .sidebar-section-label {
@@ -479,7 +479,7 @@ body::after {
 .period-nav {
     flex: 1;
     overflow-y: auto;
-    padding: 0 12px;
+    padding: 0 8px;
     scrollbar-width: thin;
     scrollbar-color: rgba(255,255,255,0.1) transparent;
 }
@@ -491,12 +491,12 @@ body::after {
 .period-item {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 8px 10px;
+    gap: 6px;
+    padding: 6px 8px;
     border-radius: 8px;
     color: rgba(255,255,255,0.6);
     text-decoration: none;
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 500;
     transition: all 0.15s;
     margin-bottom: 2px;
@@ -514,26 +514,26 @@ body::after {
     box-shadow: 0 0 12px rgba(0,212,255,0.1);
 }
 
-.period-item svg { width: 15px; height: 15px; flex-shrink: 0; opacity: 0.7; }
+.period-item svg { width: 14px; height: 14px; flex-shrink: 0; opacity: 0.7; }
 .period-item.active svg { opacity: 1; }
 
 .sidebar-footer {
-    padding: 16px 12px;
+    padding: 12px 8px;
     border-top: 1px solid rgba(255,255,255,0.07);
 }
 
 .user-info {
     display: flex;
     align-items: center;
-    gap: 10px;
-    padding: 8px 10px;
+    gap: 8px;
+    padding: 6px 8px;
     border-radius: 8px;
-    margin-bottom: 8px;
+    margin-bottom: 6px;
 }
 
 .user-avatar {
-    width: 32px;
-    height: 32px;
+    width: 28px;
+    height: 28px;
     border-radius: 50%;
     background: var(--accent);
     display: flex;
@@ -559,13 +559,13 @@ body::after {
     color: rgba(255,255,255,0.4);
 }
 
-.sidebar-actions { display: flex; flex-direction: column; gap: 4px; }
+.sidebar-actions { display: flex; flex-direction: column; gap: 2px; }
 
 .sidebar-action {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 8px 10px;
+    gap: 6px;
+    padding: 6px 8px;
     border-radius: 8px;
     color: rgba(255,255,255,0.6);
     text-decoration: none;
@@ -581,7 +581,7 @@ body::after {
 }
 
 .sidebar-action:hover { background: rgba(255,255,255,0.07); color: #fff; }
-.sidebar-action svg { width: 15px; height: 15px; }
+.sidebar-action svg { width: 14px; height: 14px; }
 
 /* ===== MAIN ===== */
 .main {
@@ -1107,7 +1107,7 @@ body.light .modal-overlay { background: rgba(0,0,0,0.3); }
     background: var(--surface);
     border-radius: 16px;
     width: 100%;
-    max-width: 640px;
+    max-width: 900px;
     max-height: 90vh;
     overflow-y: auto;
     box-shadow: 0 24px 64px rgba(0,0,0,0.4), 0 0 40px rgba(0,212,255,0.05);
@@ -1152,7 +1152,7 @@ body.light .modal-overlay { background: rgba(0,0,0,0.3); }
 
 .entry-row {
     display: grid;
-    grid-template-columns: 2fr 1fr 1fr 1fr 1fr auto auto 1fr auto;
+    grid-template-columns: 2fr 1fr 1fr 1fr 1fr auto auto 1fr 1fr auto;
     gap: 8px;
     margin-bottom: 8px;
     align-items: end;
