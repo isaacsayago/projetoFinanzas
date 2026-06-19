@@ -207,44 +207,78 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $cardId = isset($_POST['card_id'][$i]) && $_POST['card_id'][$i] !== '' ? (int)$_POST['card_id'][$i] : null;
             $sharedWithUid = isset($_POST['shared_with'][$i]) && $_POST['shared_with'][$i] !== '' ? (int)$_POST['shared_with'][$i] : null;
 
-            // Buscar dia de fechamento do cartão selecionado
+            // Buscar dados do cartão selecionado
             $diaFechamento = null;
+            $diaVencimento = null;
             if ($cardId) {
-                $stmtFech = $pdo->prepare("SELECT dia_fechamento FROM credit_cards WHERE id=:id AND user_id=:uid");
+                $stmtFech = $pdo->prepare("SELECT dia_fechamento, dia_vencimento FROM credit_cards WHERE id=:id AND user_id=:uid");
                 $stmtFech->execute([':id'=>$cardId, ':uid'=>$current_user_id]);
-                $diaFechamento = (int)$stmtFech->fetchColumn();
+                $cardRow = $stmtFech->fetch(PDO::FETCH_ASSOC);
+                if ($cardRow) {
+                    $diaFechamento = (int)$cardRow['dia_fechamento'];
+                    $diaVencimento = (int)$cardRow['dia_vencimento'];
+                }
             }
 
-            if ($n && $a && $d && is_numeric($a)) {
-                if ($parcelado) {
-                    $baseDate = new DateTime($d);
-                    for ($p = 1; $p <= $parcelas; $p++) {
-                        $nomeParcela = $n . ' (' . $p . '/' . $parcelas . ')';
-                        $parcelDate = clone $baseDate;
-                        if ($p > 1) {
-                            $parcelDate->modify('+' . ($p - 1) . ' months');
-                            $originalDay = (int)$baseDate->format('d');
-                            $lastDayOfMonth = (int)$parcelDate->format('t');
-                            if ($originalDay > $lastDayOfMonth) {
-                                $parcelDate->setDate((int)$parcelDate->format('Y'), (int)$parcelDate->format('m'), $lastDayOfMonth);
-                            }
-                        }
-                        $parcelDateStr = $parcelDate->format('Y-m-d');
-                        $stmt->execute([':user_id'=>$current_user_id,':shared_uid'=>$sharedWithUid,':name'=>$nomeParcela,':amount'=>$a,':due_date'=>$parcelDateStr,':type'=>$type,':planned'=>$planned,':period'=>$parcelDate->format('Y-m')]);
+            // Se tem cartão, usa data de hoje como data da compra para cálculo da fatura
+            // A due_date é calculada automaticamente (dia_vencimento no mês da fatura)
+            if ($cardId && $diaFechamento && $diaVencimento) {
+                $purchaseDate = $d ?: date('Y-m-d'); // data informada ou hoje
 
-                        if ($cardId && $diaFechamento) {
+                if ($n && $a && is_numeric($a)) {
+                    if ($parcelado) {
+                        $baseDate = new DateTime($purchaseDate);
+                        for ($p = 1; $p <= $parcelas; $p++) {
+                            $nomeParcela = $n . ' (' . $p . '/' . $parcelas . ')';
+                            $parcelPurchase = clone $baseDate;
+                            if ($p > 1) $parcelPurchase->modify('+' . ($p - 1) . ' months');
+
+                            $faturaPeriod = calcularFaturaPeriod($parcelPurchase->format('Y-m-d'), $diaFechamento);
+                            // due_date = dia_vencimento no mês da fatura
+                            $fatY = (int)substr($faturaPeriod, 0, 4);
+                            $fatM = (int)substr($faturaPeriod, 5, 2);
+                            $lastD = (int)(new DateTime("{$fatY}-{$fatM}-01"))->format('t');
+                            $dVenc = min($diaVencimento, $lastD);
+                            $dueDate = sprintf('%04d-%02d-%02d', $fatY, $fatM, $dVenc);
+
+                            $stmt->execute([':user_id'=>$current_user_id,':shared_uid'=>$sharedWithUid,':name'=>$nomeParcela,':amount'=>$a,':due_date'=>$dueDate,':type'=>'expense',':planned'=>$planned,':period'=>$faturaPeriod]);
                             $expenseId = $pdo->lastInsertId();
-                            $faturaPeriod = calcularFaturaPeriod($parcelDateStr, $diaFechamento);
                             $stmtCardLink->execute([':eid'=>$expenseId, ':cid'=>$cardId, ':fatura'=>$faturaPeriod]);
                         }
-                    }
-                } else {
-                    $stmt->execute([':user_id'=>$current_user_id,':shared_uid'=>$sharedWithUid,':name'=>$n,':amount'=>$a,':due_date'=>$d,':type'=>$type,':planned'=>$planned,':period'=>(new DateTime($d))->format('Y-m')]);
+                    } else {
+                        $faturaPeriod = calcularFaturaPeriod($purchaseDate, $diaFechamento);
+                        $fatY = (int)substr($faturaPeriod, 0, 4);
+                        $fatM = (int)substr($faturaPeriod, 5, 2);
+                        $lastD = (int)(new DateTime("{$fatY}-{$fatM}-01"))->format('t');
+                        $dVenc = min($diaVencimento, $lastD);
+                        $dueDate = sprintf('%04d-%02d-%02d', $fatY, $fatM, $dVenc);
 
-                    if ($cardId && $diaFechamento) {
+                        $stmt->execute([':user_id'=>$current_user_id,':shared_uid'=>$sharedWithUid,':name'=>$n,':amount'=>$a,':due_date'=>$dueDate,':type'=>'expense',':planned'=>$planned,':period'=>$faturaPeriod]);
                         $expenseId = $pdo->lastInsertId();
-                        $faturaPeriod = calcularFaturaPeriod($d, $diaFechamento);
                         $stmtCardLink->execute([':eid'=>$expenseId, ':cid'=>$cardId, ':fatura'=>$faturaPeriod]);
+                    }
+                }
+            } else {
+                // Lançamento sem cartão — fluxo normal
+                if ($n && $a && $d && is_numeric($a)) {
+                    if ($parcelado) {
+                        $baseDate = new DateTime($d);
+                        for ($p = 1; $p <= $parcelas; $p++) {
+                            $nomeParcela = $n . ' (' . $p . '/' . $parcelas . ')';
+                            $parcelDate = clone $baseDate;
+                            if ($p > 1) {
+                                $parcelDate->modify('+' . ($p - 1) . ' months');
+                                $originalDay = (int)$baseDate->format('d');
+                                $lastDayOfMonth = (int)$parcelDate->format('t');
+                                if ($originalDay > $lastDayOfMonth) {
+                                    $parcelDate->setDate((int)$parcelDate->format('Y'), (int)$parcelDate->format('m'), $lastDayOfMonth);
+                                }
+                            }
+                            $parcelDateStr = $parcelDate->format('Y-m-d');
+                            $stmt->execute([':user_id'=>$current_user_id,':shared_uid'=>$sharedWithUid,':name'=>$nomeParcela,':amount'=>$a,':due_date'=>$parcelDateStr,':type'=>$type,':planned'=>$planned,':period'=>$parcelDate->format('Y-m')]);
+                        }
+                    } else {
+                        $stmt->execute([':user_id'=>$current_user_id,':shared_uid'=>$sharedWithUid,':name'=>$n,':amount'=>$a,':due_date'=>$d,':type'=>$type,':planned'=>$planned,':period'=>(new DateTime($d))->format('Y-m')]);
                     }
                 }
             }
@@ -310,12 +344,28 @@ if ($selectedPeriod !== 'all') {
     $saldo_mes = 0; $total_expense_month = 0; $total_income_month = 0;
 }
 
-$expenseRows = array_filter($rows, fn($r) => ($r['type'] ?? 'expense') === 'expense');
-$incomeRows  = array_filter($rows, fn($r) => ($r['type'] ?? 'expense') === 'income');
+// IDs de despesas vinculadas a cartão (não exibir individualmente)
+$cardLinkedIds = [];
+$clStmt = $pdo->prepare("SELECT expense_id FROM expense_card_link");
+$clStmt->execute();
+$cardLinkedIds = $clStmt->fetchAll(PDO::FETCH_COLUMN);
+
+// Filtrar: remover despesas individuais de cartão, manter o resto
+$rowsSemCartao = array_filter($rows, fn($r) => !in_array($r['id'], $cardLinkedIds));
+
+// Buscar faturas consolidadas por cartão
+$faturaRows = getFaturasConsolidadas($pdo, $data_user_id, $selectedPeriod !== 'all' ? $selectedPeriod : null);
+
+// Juntar despesas normais + faturas consolidadas
+$expenseRowsBase = array_filter($rowsSemCartao, fn($r) => ($r['type'] ?? 'expense') === 'expense');
+$expenseRows = array_merge(array_values($expenseRowsBase), $faturaRows);
+usort($expenseRows, fn($a, $b) => strcmp($a['due_date'], $b['due_date']));
+
+$incomeRows  = array_filter($rowsSemCartao, fn($r) => ($r['type'] ?? 'expense') === 'income');
 
 // ---- Dados de cartões de crédito ----
 $cardMetrics = getConsolidatedCardMetrics($pdo, $data_user_id);
-$userCardsStmt = $pdo->prepare("SELECT id, nome FROM credit_cards WHERE user_id = :uid AND ativo = 1 ORDER BY nome ASC");
+$userCardsStmt = $pdo->prepare("SELECT id, nome, dia_vencimento, dia_fechamento FROM credit_cards WHERE user_id = :uid AND ativo = 1 ORDER BY nome ASC");
 $userCardsStmt->execute([':uid' => $current_user_id]);
 $userCards = $userCardsStmt->fetchAll(PDO::FETCH_ASSOC);
 
@@ -1722,15 +1772,18 @@ body.light ::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
                     </thead>
                     <tbody>
                         <?php foreach ($expenseRows as $r):
+                            $isFatura = !empty($r['is_fatura']);
                             $isShared = !empty($r['shared_with_user_id']);
-                            // Pode editar se: é dono OU é compartilhado com ele
-                            $canAct = ($r['user_id'] == $current_user_id || (isset($r['shared_with_user_id']) && $r['shared_with_user_id'] == $current_user_id));
-                            // No modo visualização de conta alheia, só pode agir em compartilhados
-                            if ($viewing_shared && !$isShared) $canAct = false;
+                            if ($isFatura) {
+                                $canAct = false; // Faturas consolidadas não têm ação individual
+                            } else {
+                                $canAct = ($r['user_id'] == $current_user_id || (isset($r['shared_with_user_id']) && $r['shared_with_user_id'] == $current_user_id));
+                                if ($viewing_shared && !$isShared) $canAct = false;
+                            }
                         ?>
                         <tr>
                             <td>
-                                <div class="item-name"><?php if ($isShared): ?><span title="Lançamento compartilhado" style="margin-right:4px;">👥</span><?php endif; ?><?= safe($r['name']) ?></div>
+                                <div class="item-name"><?php if ($isFatura): ?><a href="cartoes.php?detail=<?= $r['card_id'] ?>" title="Ver detalhes do cartão" style="text-decoration:none;">💳 <?= safe($r['name']) ?></a><?php elseif ($isShared): ?><span title="Lançamento compartilhado" style="margin-right:4px;">👥</span><?= safe($r['name']) ?><?php else: ?><?= safe($r['name']) ?><?php endif; ?></div>
                                 <?php if (!empty($r['planned'])): ?>
                                 <span class="badge planned" style="margin-top:2px;font-size:10px;">Planificado</span>
                                 <?php endif; ?>
@@ -1763,6 +1816,8 @@ body.light ::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
                                         </svg>
                                     </a>
                                 </div>
+                                <?php elseif ($isFatura): ?>
+                                <a href="cartoes.php?detail=<?= $r['card_id'] ?>" style="font-size:11px;color:var(--accent);text-decoration:none;" title="Ver detalhes da fatura">Ver detalhes →</a>
                                 <?php else: ?>
                                 <span style="font-size:11px;color:var(--muted);">Somente visualização</span>
                                 <?php endif; ?>
@@ -1889,7 +1944,7 @@ body.light ::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
                             <label>Valor</label>
                             <input name="amount[]" type="text" inputmode="decimal" placeholder="0,00" required>
                         </div>
-                        <div>
+                        <div class="date-field">
                             <label>Vencimento</label>
                             <input name="date[]" type="date" value="<?= $today_iso ?>" required>
                         </div>
@@ -1921,10 +1976,10 @@ body.light ::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
                         <?php if ($userCards): ?>
                         <div>
                             <label>Cartão</label>
-                            <select name="card_id[]">
-                                <option value="">Nenhum</option>
+                            <select name="card_id[]" onchange="toggleCardDate(this)">
+                                <option value="" data-venc="" data-fech="">Nenhum</option>
                                 <?php foreach ($userCards as $uc): ?>
-                                <option value="<?= $uc['id'] ?>"><?= safe($uc['nome']) ?></option>
+                                <option value="<?= $uc['id'] ?>" data-venc="<?= $uc['dia_vencimento'] ?>" data-fech="<?= $uc['dia_fechamento'] ?>"><?= safe($uc['nome']) ?></option>
                                 <?php endforeach; ?>
                             </select>
                         </div>
@@ -2351,6 +2406,26 @@ buildCharts();
 document.getElementById('passwordModal').classList.add('open');
 <?php endif; ?>
 
+// Quando seleciona um cartão, esconde o campo de vencimento (a data é automática)
+function toggleCardDate(sel) {
+    const row = sel.closest('.entry-row');
+    const dateField = row.querySelector('.date-field');
+    const dateInput = dateField.querySelector('input[name="date[]"]');
+    const dateLabel = dateField.querySelector('label');
+    if (sel.value) {
+        const opt = sel.options[sel.selectedIndex];
+        dateLabel.textContent = 'Data da compra';
+        dateInput.removeAttribute('required');
+        dateField.style.opacity = '0.5';
+        dateField.title = 'Vencimento automático (dia ' + opt.dataset.venc + ' da fatura)';
+    } else {
+        dateLabel.textContent = 'Vencimento';
+        dateInput.setAttribute('required', '');
+        dateField.style.opacity = '1';
+        dateField.title = '';
+    }
+}
+
 // Add entry row
 function toggleParcelas(sel) {
     const row = sel.closest('.entry-row');
@@ -2369,6 +2444,9 @@ function addEntryRow() {
     newRow.querySelectorAll('select').forEach(s => s.selectedIndex = 0);
     const parcelasField = newRow.querySelector('.parcelas-field');
     if (parcelasField) { parcelasField.style.display = 'none'; parcelasField.querySelector('input').value = '2'; }
+    // Reset date field state (in case previous row had card selected)
+    const dateField = newRow.querySelector('.date-field');
+    if (dateField) { dateField.style.opacity = '1'; dateField.title = ''; dateField.querySelector('label').textContent = 'Vencimento'; dateField.querySelector('input').setAttribute('required', ''); }
     container.appendChild(newRow);
     newRow.querySelector('input[type="text"]').focus();
 }

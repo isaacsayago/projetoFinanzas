@@ -168,6 +168,65 @@ function getProximasFaturas(PDO $pdo, int $cardId, int $mesesFuturos = 6): array
 }
 
 /**
+ * Retorna faturas consolidadas por cartão para exibição no dashboard.
+ * Cada entrada representa "FAT CARTÃO [nome]" com o total da fatura daquele período.
+ *
+ * @param PDO    $pdo
+ * @param int    $userId
+ * @param string|null $period Período YYYY-MM (null = todos)
+ * @return array Lista de faturas consolidadas como pseudo-rows de expense
+ */
+function getFaturasConsolidadas(PDO $pdo, int $userId, ?string $period = null): array {
+    $wherePeriod = $period ? "AND ecl.fatura_period = :period" : "";
+
+    $sql = "
+        SELECT c.id as card_id, c.nome as card_nome, c.dia_vencimento,
+               ecl.fatura_period,
+               SUM(e.amount) as total,
+               MIN(e.paid) as all_paid
+        FROM expense_card_link ecl
+        JOIN expenses e ON e.id = ecl.expense_id
+        JOIN credit_cards c ON c.id = ecl.card_id
+        WHERE c.user_id = :uid {$wherePeriod}
+        GROUP BY c.id, c.nome, c.dia_vencimento, ecl.fatura_period
+        ORDER BY ecl.fatura_period ASC, c.nome ASC
+    ";
+    $stmt = $pdo->prepare($sql);
+    $params = [':uid' => $userId];
+    if ($period) $params[':period'] = $period;
+    $stmt->execute($params);
+    $faturas = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $result = [];
+    foreach ($faturas as $f) {
+        // Montar data de vencimento: dia_vencimento no mês da fatura
+        $fatYear = (int)substr($f['fatura_period'], 0, 4);
+        $fatMonth = (int)substr($f['fatura_period'], 5, 2);
+        $diaVenc = (int)$f['dia_vencimento'];
+        $lastDay = (int)(new DateTime("{$fatYear}-{$fatMonth}-01"))->format('t');
+        $diaVencEfetivo = min($diaVenc, $lastDay);
+        $dueDate = sprintf('%04d-%02d-%02d', $fatYear, $fatMonth, $diaVencEfetivo);
+
+        $result[] = [
+            'id'                   => 'fat_' . $f['card_id'] . '_' . $f['fatura_period'],
+            'user_id'              => $userId,
+            'shared_with_user_id'  => null,
+            'name'                 => 'FAT CARTÃO ' . $f['card_nome'],
+            'amount'               => (float)$f['total'],
+            'due_date'             => $dueDate,
+            'type'                 => 'expense',
+            'planned'              => 0,
+            'period'               => $f['fatura_period'],
+            'paid'                 => (int)$f['all_paid'],
+            'payment_date'         => null,
+            'is_fatura'            => true,
+            'card_id'              => (int)$f['card_id'],
+        ];
+    }
+    return $result;
+}
+
+/**
  * Retorna evolução mensal de gastos de um cartão (últimos N meses).
  *
  * @param PDO $pdo
