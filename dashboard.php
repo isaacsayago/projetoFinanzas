@@ -13,6 +13,45 @@ $is_admin = isset($_SESSION['nivel']) && $_SESSION['nivel'] === 'adm';
 
 date_default_timezone_set('America/Sao_Paulo');
 
+// ---- Modo conta compartilhada ----
+$viewing_shared = false;
+$data_user_id = $current_user_id; // ID usado para filtrar dados
+$shared_owner_name = '';
+if (isset($_SESSION['viewing_shared_user_id']) && $_SESSION['viewing_shared_user_id'] != $current_user_id) {
+    $viewing_shared = true;
+    $data_user_id = (int)$_SESSION['viewing_shared_user_id'];
+    $shared_owner_name = $_SESSION['viewing_shared_user_name'] ?? '';
+}
+
+// Voltar para minha conta
+if (isset($_GET['action']) && $_GET['action'] === 'exit_shared') {
+    unset($_SESSION['viewing_shared_user_id'], $_SESSION['viewing_shared_user_name']);
+    header('Location: dashboard.php');
+    exit;
+}
+
+// Buscar compartilhamentos aceitos (para saber com quem posso criar lançamentos compartilhados)
+$activeShares = [];
+$stmtShares = $pdo->prepare("
+    SELECT a.id as share_id, a.owner_id, a.invitee_id, u_owner.nome as owner_nome, u_inv.nome as invitee_nome
+    FROM account_shares a
+    JOIN usuarios u_owner ON u_owner.id = a.owner_id
+    JOIN usuarios u_inv ON u_inv.id = a.invitee_id
+    WHERE (a.owner_id = :uid1 OR a.invitee_id = :uid2) AND a.status = 'accepted'
+");
+$stmtShares->execute([':uid1' => $current_user_id, ':uid2' => $current_user_id]);
+$activeShares = $stmtShares->fetchAll(PDO::FETCH_ASSOC);
+
+// Montar lista de parceiros para select de compartilhamento
+$sharePartners = [];
+foreach ($activeShares as $sh) {
+    if ($sh['owner_id'] == $current_user_id) {
+        $sharePartners[$sh['invitee_id']] = $sh['invitee_nome'];
+    } else {
+        $sharePartners[$sh['owner_id']] = $sh['owner_nome'];
+    }
+}
+
 // ---------- Helpers ----------
 function money($v){ return 'R$ ' . number_format((float)$v, 2, ',', '.'); }
 function safe($v){ return htmlspecialchars($v ?? '', ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); }
@@ -45,22 +84,23 @@ $action = $_GET['action'] ?? null;
 $redirectUrl = "?period=" . urlencode($selectedPeriod);
 
 // -------------------- AÇÕES GET --------------------
+// Permite ação em: expenses do próprio usuário OU compartilhados com ele
 if ($action === 'delete' && isset($_GET['id'])) {
     $id = (int)$_GET['id'];
-    $del = $pdo->prepare("DELETE FROM expenses WHERE id = :id AND user_id = :user_id");
-    $del->execute([':id' => $id, ':user_id' => $current_user_id]);
+    $del = $pdo->prepare("DELETE FROM expenses WHERE id = :id AND (user_id = :uid OR shared_with_user_id = :uid2)");
+    $del->execute([':id' => $id, ':uid' => $current_user_id, ':uid2' => $current_user_id]);
     header("Location: " . $redirectUrl); exit;
 }
 
 if ($action === 'toggle' && isset($_GET['id'])) {
     $id = (int)$_GET['id'];
-    $cur = $pdo->prepare("SELECT paid FROM expenses WHERE id = :id AND user_id = :user_id");
-    $cur->execute([':id' => $id, ':user_id' => $current_user_id]);
+    $cur = $pdo->prepare("SELECT paid FROM expenses WHERE id = :id AND (user_id = :uid OR shared_with_user_id = :uid2)");
+    $cur->execute([':id' => $id, ':uid' => $current_user_id, ':uid2' => $current_user_id]);
     $r = $cur->fetch(PDO::FETCH_ASSOC);
     if ($r) {
         $new = $r['paid'] ? 0 : 1;
-        $u = $pdo->prepare("UPDATE expenses SET paid = :paid, payment_date = CASE WHEN :paid = 1 THEN COALESCE(payment_date, CURDATE()) ELSE NULL END WHERE id = :id AND user_id = :user_id");
-        $u->execute([':paid' => $new, ':id' => $id, ':user_id' => $current_user_id]);
+        $u = $pdo->prepare("UPDATE expenses SET paid = :paid, payment_date = CASE WHEN :paid2 = 1 THEN COALESCE(payment_date, CURDATE()) ELSE NULL END WHERE id = :id AND (user_id = :uid OR shared_with_user_id = :uid2)");
+        $u->execute([':paid' => $new, ':paid2' => $new, ':id' => $id, ':uid' => $current_user_id, ':uid2' => $current_user_id]);
     }
     header("Location: " . $redirectUrl); exit;
 }
@@ -97,8 +137,8 @@ if ($action === 'copy_prev' && $selectedPeriod !== 'all') {
 $editRow = null;
 if ($action === 'edit' && isset($_GET['id'])) {
     $id = (int)$_GET['id'];
-    $s = $pdo->prepare("SELECT * FROM expenses WHERE id = :id AND user_id = :user_id");
-    $s->execute([':id' => $id, ':user_id' => $current_user_id]);
+    $s = $pdo->prepare("SELECT * FROM expenses WHERE id = :id AND (user_id = :uid OR shared_with_user_id = :uid2)");
+    $s->execute([':id' => $id, ':uid' => $current_user_id, ':uid2' => $current_user_id]);
     $editRow = $s->fetch(PDO::FETCH_ASSOC) ?: null;
 }
 
@@ -146,14 +186,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $paid = (isset($_POST['paid_single']) && $_POST['paid_single'] == '1') ? 1 : 0;
         if ($name && $amount && $due_date && is_numeric($amount)) {
             $period = (new DateTime($due_date))->format('Y-m');
-            $pdo->prepare("UPDATE expenses SET name=:name, amount=:amount, due_date=:due_date, type=:type, planned=:planned, period=:period, paid=:paid, payment_date=CASE WHEN :paid=1 THEN COALESCE(payment_date,CURDATE()) ELSE NULL END WHERE id=:id AND user_id=:user_id")
-                ->execute([':name'=>$name,':amount'=>$amount,':due_date'=>$due_date,':type'=>$type,':planned'=>$planned,':period'=>$period,':paid'=>$paid,':id'=>$id,':user_id'=>$current_user_id]);
+            $pdo->prepare("UPDATE expenses SET name=:name, amount=:amount, due_date=:due_date, type=:type, planned=:planned, period=:period, paid=:paid, payment_date=CASE WHEN :paid2=1 THEN COALESCE(payment_date,CURDATE()) ELSE NULL END WHERE id=:id AND (user_id=:uid OR shared_with_user_id=:uid2)")
+                ->execute([':name'=>$name,':amount'=>$amount,':due_date'=>$due_date,':type'=>$type,':planned'=>$planned,':period'=>$period,':paid'=>$paid,':paid2'=>$paid,':id'=>$id,':uid'=>$current_user_id,':uid2'=>$current_user_id]);
         }
         header("Location: " . $redirectUrl); exit;
     }
 
     if (isset($_POST['name']) && is_array($_POST['name'])) {
-        $stmt = $pdo->prepare("INSERT INTO expenses (user_id, name, amount, due_date, type, planned, period) VALUES (:user_id, :name, :amount, :due_date, :type, :planned, :period)");
+        $stmt = $pdo->prepare("INSERT INTO expenses (user_id, shared_with_user_id, name, amount, due_date, type, planned, period) VALUES (:user_id, :shared_uid, :name, :amount, :due_date, :type, :planned, :period)");
         $stmtCardLink = $pdo->prepare("INSERT INTO expense_card_link (expense_id, card_id, fatura_period) VALUES (:eid, :cid, :fatura)");
 
         foreach ($_POST['name'] as $i => $n) {
@@ -165,6 +205,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $parcelas = isset($_POST['parcelas'][$i]) ? (int)$_POST['parcelas'][$i] : 0;
             $parcelado = isset($_POST['parcelado'][$i]) && $_POST['parcelado'][$i] === '1' && $parcelas > 1;
             $cardId = isset($_POST['card_id'][$i]) && $_POST['card_id'][$i] !== '' ? (int)$_POST['card_id'][$i] : null;
+            $sharedWithUid = isset($_POST['shared_with'][$i]) && $_POST['shared_with'][$i] !== '' ? (int)$_POST['shared_with'][$i] : null;
 
             // Buscar dia de fechamento do cartão selecionado
             $diaFechamento = null;
@@ -189,7 +230,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             }
                         }
                         $parcelDateStr = $parcelDate->format('Y-m-d');
-                        $stmt->execute([':user_id'=>$current_user_id,':name'=>$nomeParcela,':amount'=>$a,':due_date'=>$parcelDateStr,':type'=>$type,':planned'=>$planned,':period'=>$parcelDate->format('Y-m')]);
+                        $stmt->execute([':user_id'=>$current_user_id,':shared_uid'=>$sharedWithUid,':name'=>$nomeParcela,':amount'=>$a,':due_date'=>$parcelDateStr,':type'=>$type,':planned'=>$planned,':period'=>$parcelDate->format('Y-m')]);
 
                         if ($cardId && $diaFechamento) {
                             $expenseId = $pdo->lastInsertId();
@@ -198,7 +239,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         }
                     }
                 } else {
-                    $stmt->execute([':user_id'=>$current_user_id,':name'=>$n,':amount'=>$a,':due_date'=>$d,':type'=>$type,':planned'=>$planned,':period'=>(new DateTime($d))->format('Y-m')]);
+                    $stmt->execute([':user_id'=>$current_user_id,':shared_uid'=>$sharedWithUid,':name'=>$n,':amount'=>$a,':due_date'=>$d,':type'=>$type,':planned'=>$planned,':period'=>(new DateTime($d))->format('Y-m')]);
 
                     if ($cardId && $diaFechamento) {
                         $expenseId = $pdo->lastInsertId();
@@ -213,54 +254,58 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 // -------------------- CÁLCULOS --------------------
+// $data_user_id = usuário cujos dados estamos vendo (próprio ou conta compartilhada)
+// Inclui também lançamentos compartilhados com o $data_user_id
+$whereUser = "(user_id=:uid OR shared_with_user_id=:uid2)";
+
 if ($selectedPeriod !== 'all') {
-    $p = $pdo->prepare("SELECT SUM(CASE WHEN type='expense' AND paid=0 THEN amount ELSE 0 END) AS unpaid_expense, SUM(CASE WHEN type='income' AND paid=0 THEN amount ELSE 0 END) AS unpaid_income FROM expenses WHERE period=:period AND user_id=:user_id");
-    $p->execute([':period'=>$selectedPeriod,':user_id'=>$current_user_id]);
+    $p = $pdo->prepare("SELECT SUM(CASE WHEN type='expense' AND paid=0 THEN amount ELSE 0 END) AS unpaid_expense, SUM(CASE WHEN type='income' AND paid=0 THEN amount ELSE 0 END) AS unpaid_income FROM expenses WHERE period=:period AND {$whereUser}");
+    $p->execute([':period'=>$selectedPeriod,':uid'=>$data_user_id,':uid2'=>$data_user_id]);
     $pt = $p->fetch(PDO::FETCH_ASSOC);
     $due_now = $pt['unpaid_expense'] ?? 0;
 
-    $f = $pdo->prepare("SELECT SUM(amount) as v FROM expenses WHERE paid=0 AND type='expense' AND period>:period AND user_id=:user_id");
-    $f->execute([':period'=>$selectedPeriod,':user_id'=>$current_user_id]);
+    $f = $pdo->prepare("SELECT SUM(amount) as v FROM expenses WHERE paid=0 AND type='expense' AND period>:period AND {$whereUser}");
+    $f->execute([':period'=>$selectedPeriod,':uid'=>$data_user_id,':uid2'=>$data_user_id]);
     $due_future = $f->fetch(PDO::FETCH_ASSOC)['v'] ?? 0;
 
-    $t = $pdo->prepare("SELECT SUM(amount) as v FROM expenses WHERE paid=0 AND type='expense' AND user_id=:user_id");
-    $t->execute([':user_id'=>$current_user_id]);
+    $t = $pdo->prepare("SELECT SUM(amount) as v FROM expenses WHERE paid=0 AND type='expense' AND {$whereUser}");
+    $t->execute([':uid'=>$data_user_id,':uid2'=>$data_user_id]);
     $total_all = $t->fetch(PDO::FETCH_ASSOC)['v'] ?? 0;
 } else {
-    $tot = $pdo->prepare("SELECT SUM(CASE WHEN due_date<=:today AND paid=0 AND type='expense' THEN amount ELSE 0 END) AS due_now, SUM(CASE WHEN due_date>:today AND paid=0 AND type='expense' THEN amount ELSE 0 END) AS due_future, SUM(CASE WHEN paid=0 AND type='expense' THEN amount ELSE 0 END) AS total_all FROM expenses WHERE user_id=:user_id");
-    $tot->execute([':today'=>$today_iso,':user_id'=>$current_user_id]);
+    $tot = $pdo->prepare("SELECT SUM(CASE WHEN due_date<=:today AND paid=0 AND type='expense' THEN amount ELSE 0 END) AS due_now, SUM(CASE WHEN due_date>:today AND paid=0 AND type='expense' THEN amount ELSE 0 END) AS due_future, SUM(CASE WHEN paid=0 AND type='expense' THEN amount ELSE 0 END) AS total_all FROM expenses WHERE {$whereUser}");
+    $tot->execute([':today'=>$today_iso,':uid'=>$data_user_id,':uid2'=>$data_user_id]);
     $tv = $tot->fetch(PDO::FETCH_ASSOC);
     $due_now = $tv['due_now'] ?? 0;
     $due_future = $tv['due_future'] ?? 0;
     $total_all = $tv['total_all'] ?? 0;
 }
 
-$g = $pdo->prepare("SELECT SUM(CASE WHEN type='income' AND paid=1 THEN amount ELSE 0 END) as rec, SUM(CASE WHEN type='expense' AND paid=1 THEN amount ELSE 0 END) as pag FROM expenses WHERE user_id=:user_id");
-$g->execute([':user_id'=>$current_user_id]);
+$g = $pdo->prepare("SELECT SUM(CASE WHEN type='income' AND paid=1 THEN amount ELSE 0 END) as rec, SUM(CASE WHEN type='expense' AND paid=1 THEN amount ELSE 0 END) as pag FROM expenses WHERE {$whereUser}");
+$g->execute([':uid'=>$data_user_id,':uid2'=>$data_user_id]);
 $gv = $g->fetch(PDO::FETCH_ASSOC);
 $balanco_geral = ($gv['rec'] ?? 0) - ($gv['pag'] ?? 0);
 
-$periodsStmt = $pdo->prepare("SELECT DISTINCT DATE_FORMAT(due_date, '%Y-%m') as period FROM expenses WHERE user_id=:user_id ORDER BY period DESC");
-$periodsStmt->execute([':user_id'=>$current_user_id]);
+$periodsStmt = $pdo->prepare("SELECT DISTINCT DATE_FORMAT(due_date, '%Y-%m') as period FROM expenses WHERE {$whereUser} ORDER BY period DESC");
+$periodsStmt->execute([':uid'=>$data_user_id,':uid2'=>$data_user_id]);
 $periods = $periodsStmt->fetchAll(PDO::FETCH_COLUMN);
 
-$namesStmt = $pdo->prepare("SELECT DISTINCT name FROM expenses WHERE user_id=:user_id ORDER BY name ASC");
-$namesStmt->execute([':user_id'=>$current_user_id]);
+$namesStmt = $pdo->prepare("SELECT DISTINCT name FROM expenses WHERE {$whereUser} ORDER BY name ASC");
+$namesStmt->execute([':uid'=>$data_user_id,':uid2'=>$data_user_id]);
 $suggestionNames = $namesStmt->fetchAll(PDO::FETCH_COLUMN);
 
 if ($selectedPeriod !== 'all') {
-    $listStmt = $pdo->prepare("SELECT * FROM expenses WHERE period=:period AND user_id=:user_id ORDER BY type ASC, due_date ASC");
-    $listStmt->execute([':period'=>$selectedPeriod,':user_id'=>$current_user_id]);
+    $listStmt = $pdo->prepare("SELECT * FROM expenses WHERE period=:period AND {$whereUser} ORDER BY type ASC, due_date ASC");
+    $listStmt->execute([':period'=>$selectedPeriod,':uid'=>$data_user_id,':uid2'=>$data_user_id]);
     $rows = $listStmt->fetchAll(PDO::FETCH_ASSOC);
-    $sumStmt = $pdo->prepare("SELECT SUM(CASE WHEN type='expense' THEN amount ELSE 0 END) AS te, SUM(CASE WHEN type='income' THEN amount ELSE 0 END) AS ti FROM expenses WHERE period=:period AND user_id=:user_id");
-    $sumStmt->execute([':period'=>$selectedPeriod,':user_id'=>$current_user_id]);
+    $sumStmt = $pdo->prepare("SELECT SUM(CASE WHEN type='expense' THEN amount ELSE 0 END) AS te, SUM(CASE WHEN type='income' THEN amount ELSE 0 END) AS ti FROM expenses WHERE period=:period AND {$whereUser}");
+    $sumStmt->execute([':period'=>$selectedPeriod,':uid'=>$data_user_id,':uid2'=>$data_user_id]);
     $sv = $sumStmt->fetch(PDO::FETCH_ASSOC);
     $saldo_mes = ($sv['ti'] ?? 0) - ($sv['te'] ?? 0);
     $total_expense_month = $sv['te'] ?? 0;
     $total_income_month = $sv['ti'] ?? 0;
 } else {
-    $listStmt = $pdo->prepare("SELECT * FROM expenses WHERE user_id=:user_id ORDER BY type ASC, due_date DESC LIMIT 200");
-    $listStmt->execute([':user_id'=>$current_user_id]);
+    $listStmt = $pdo->prepare("SELECT * FROM expenses WHERE {$whereUser} ORDER BY type ASC, due_date DESC LIMIT 200");
+    $listStmt->execute([':uid'=>$data_user_id,':uid2'=>$data_user_id]);
     $rows = $listStmt->fetchAll(PDO::FETCH_ASSOC);
     $saldo_mes = 0; $total_expense_month = 0; $total_income_month = 0;
 }
@@ -269,28 +314,28 @@ $expenseRows = array_filter($rows, fn($r) => ($r['type'] ?? 'expense') === 'expe
 $incomeRows  = array_filter($rows, fn($r) => ($r['type'] ?? 'expense') === 'income');
 
 // ---- Dados de cartões de crédito ----
-$cardMetrics = getConsolidatedCardMetrics($pdo, $current_user_id);
+$cardMetrics = getConsolidatedCardMetrics($pdo, $data_user_id);
 $userCardsStmt = $pdo->prepare("SELECT id, nome FROM credit_cards WHERE user_id = :uid AND ativo = 1 ORDER BY nome ASC");
 $userCardsStmt->execute([':uid' => $current_user_id]);
 $userCards = $userCardsStmt->fetchAll(PDO::FETCH_ASSOC);
 
 // ---- Dados para gráfico "Top Despesas" ----
 if ($selectedPeriod !== 'all') {
-    $topStmt = $pdo->prepare("SELECT name, SUM(amount) as total FROM expenses WHERE type='expense' AND period=:period AND user_id=:uid GROUP BY name ORDER BY total DESC LIMIT 7");
-    $topStmt->execute([':period'=>$selectedPeriod,':uid'=>$current_user_id]);
+    $topStmt = $pdo->prepare("SELECT name, SUM(amount) as total FROM expenses WHERE type='expense' AND period=:period AND {$whereUser} GROUP BY name ORDER BY total DESC LIMIT 7");
+    $topStmt->execute([':period'=>$selectedPeriod,':uid'=>$data_user_id,':uid2'=>$data_user_id]);
 } else {
-    $topStmt = $pdo->prepare("SELECT name, SUM(amount) as total FROM expenses WHERE type='expense' AND user_id=:uid GROUP BY name ORDER BY total DESC LIMIT 7");
-    $topStmt->execute([':uid'=>$current_user_id]);
+    $topStmt = $pdo->prepare("SELECT name, SUM(amount) as total FROM expenses WHERE type='expense' AND {$whereUser} GROUP BY name ORDER BY total DESC LIMIT 7");
+    $topStmt->execute([':uid'=>$data_user_id,':uid2'=>$data_user_id]);
 }
 $topExpenses = $topStmt->fetchAll(PDO::FETCH_ASSOC);
 
 // ---- Dados para gráfico "Despesas pagas vs pendentes" ----
 if ($selectedPeriod !== 'all') {
-    $paidStmt = $pdo->prepare("SELECT SUM(CASE WHEN paid=1 THEN amount ELSE 0 END) as pago, SUM(CASE WHEN paid=0 THEN amount ELSE 0 END) as pendente FROM expenses WHERE type='expense' AND period=:period AND user_id=:uid");
-    $paidStmt->execute([':period'=>$selectedPeriod,':uid'=>$current_user_id]);
+    $paidStmt = $pdo->prepare("SELECT SUM(CASE WHEN paid=1 THEN amount ELSE 0 END) as pago, SUM(CASE WHEN paid=0 THEN amount ELSE 0 END) as pendente FROM expenses WHERE type='expense' AND period=:period AND {$whereUser}");
+    $paidStmt->execute([':period'=>$selectedPeriod,':uid'=>$data_user_id,':uid2'=>$data_user_id]);
 } else {
-    $paidStmt = $pdo->prepare("SELECT SUM(CASE WHEN paid=1 THEN amount ELSE 0 END) as pago, SUM(CASE WHEN paid=0 THEN amount ELSE 0 END) as pendente FROM expenses WHERE type='expense' AND user_id=:uid");
-    $paidStmt->execute([':uid'=>$current_user_id]);
+    $paidStmt = $pdo->prepare("SELECT SUM(CASE WHEN paid=1 THEN amount ELSE 0 END) as pago, SUM(CASE WHEN paid=0 THEN amount ELSE 0 END) as pendente FROM expenses WHERE type='expense' AND {$whereUser}");
+    $paidStmt->execute([':uid'=>$data_user_id,':uid2'=>$data_user_id]);
 }
 $paidData = $paidStmt->fetch(PDO::FETCH_ASSOC);
 $paidTotal = (float)($paidData['pago'] ?? 0);
@@ -1368,6 +1413,21 @@ body.light ::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
 <!-- ===== MAIN ===== -->
 <main class="main">
 
+    <?php if ($viewing_shared): ?>
+    <!-- BANNER CONTA COMPARTILHADA -->
+    <div style="background:linear-gradient(90deg, rgba(168,85,247,0.15), rgba(0,212,255,0.1)); border-bottom:1px solid rgba(168,85,247,0.3); padding:10px 32px; display:flex; align-items:center; justify-content:space-between; gap:12px;">
+        <div style="display:flex;align-items:center;gap:8px;">
+            <span style="font-size:18px;">👥</span>
+            <span style="font-size:13px;font-weight:600;">Visualizando conta de <strong style="color:var(--purple, #a855f7);"><?= safe($shared_owner_name) ?></strong></span>
+            <span style="font-size:11px;color:var(--muted);">Lançamentos sem 👥 são somente visualização</span>
+        </div>
+        <a href="?action=exit_shared" style="display:inline-flex;align-items:center;gap:6px;padding:6px 14px;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.15);border-radius:8px;color:#fff;text-decoration:none;font-size:12px;font-weight:600;transition:all 0.15s;">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;"><path stroke-linecap="round" stroke-linejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18" /></svg>
+            Voltar para minha conta
+        </a>
+    </div>
+    <?php endif; ?>
+
     <!-- TOPBAR -->
     <div class="topbar">
         <div class="topbar-left">
@@ -1661,10 +1721,16 @@ body.light ::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
                         </tr>
                     </thead>
                     <tbody>
-                        <?php foreach ($expenseRows as $r): ?>
+                        <?php foreach ($expenseRows as $r):
+                            $isShared = !empty($r['shared_with_user_id']);
+                            // Pode editar se: é dono OU é compartilhado com ele
+                            $canAct = ($r['user_id'] == $current_user_id || (isset($r['shared_with_user_id']) && $r['shared_with_user_id'] == $current_user_id));
+                            // No modo visualização de conta alheia, só pode agir em compartilhados
+                            if ($viewing_shared && !$isShared) $canAct = false;
+                        ?>
                         <tr>
                             <td>
-                                <div class="item-name"><?= safe($r['name']) ?></div>
+                                <div class="item-name"><?php if ($isShared): ?><span title="Lançamento compartilhado" style="margin-right:4px;">👥</span><?php endif; ?><?= safe($r['name']) ?></div>
                                 <?php if (!empty($r['planned'])): ?>
                                 <span class="badge planned" style="margin-top:2px;font-size:10px;">Planificado</span>
                                 <?php endif; ?>
@@ -1679,6 +1745,7 @@ body.light ::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
                                 <?php endif; ?>
                             </td>
                             <td>
+                                <?php if ($canAct): ?>
                                 <div class="action-btns">
                                     <a class="btn-icon toggle" href="?action=toggle&id=<?= (int)$r['id'] ?>&period=<?= $selectedPeriod ?>" title="<?= $r['paid'] ? 'Desmarcar' : 'Marcar pago' ?>">
                                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
@@ -1696,6 +1763,9 @@ body.light ::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
                                         </svg>
                                     </a>
                                 </div>
+                                <?php else: ?>
+                                <span style="font-size:11px;color:var(--muted);">Somente visualização</span>
+                                <?php endif; ?>
                             </td>
                         </tr>
                         <?php endforeach; ?>
@@ -1733,10 +1803,14 @@ body.light ::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
                         </tr>
                     </thead>
                     <tbody>
-                        <?php foreach ($incomeRows as $r): ?>
+                        <?php foreach ($incomeRows as $r):
+                            $isShared = !empty($r['shared_with_user_id']);
+                            $canAct = ($r['user_id'] == $current_user_id || (isset($r['shared_with_user_id']) && $r['shared_with_user_id'] == $current_user_id));
+                            if ($viewing_shared && !$isShared) $canAct = false;
+                        ?>
                         <tr>
                             <td>
-                                <div class="item-name"><?= safe($r['name']) ?></div>
+                                <div class="item-name"><?php if ($isShared): ?><span title="Lançamento compartilhado" style="margin-right:4px;">👥</span><?php endif; ?><?= safe($r['name']) ?></div>
                                 <?php if (!empty($r['planned'])): ?>
                                 <span class="badge planned" style="margin-top:2px;font-size:10px;">Planificado</span>
                                 <?php endif; ?>
@@ -1751,6 +1825,7 @@ body.light ::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
                                 <?php endif; ?>
                             </td>
                             <td>
+                                <?php if ($canAct): ?>
                                 <div class="action-btns">
                                     <a class="btn-icon toggle" href="?action=toggle&id=<?= (int)$r['id'] ?>&period=<?= $selectedPeriod ?>" title="<?= $r['paid'] ? 'Desmarcar' : 'Marcar recebido' ?>">
                                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
@@ -1768,6 +1843,9 @@ body.light ::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
                                         </svg>
                                     </a>
                                 </div>
+                                <?php else: ?>
+                                <span style="font-size:11px;color:var(--muted);">Somente visualização</span>
+                                <?php endif; ?>
                             </td>
                         </tr>
                         <?php endforeach; ?>
@@ -1852,6 +1930,19 @@ body.light ::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
                         </div>
                         <?php else: ?>
                         <input type="hidden" name="card_id[]" value="">
+                        <?php endif; ?>
+                        <?php if (!empty($sharePartners)): ?>
+                        <div>
+                            <label>Compartilhar com</label>
+                            <select name="shared_with[]">
+                                <option value="">Nenhum</option>
+                                <?php foreach ($sharePartners as $spId => $spName): ?>
+                                <option value="<?= (int)$spId ?>"><?= safe($spName) ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <?php else: ?>
+                        <input type="hidden" name="shared_with[]" value="">
                         <?php endif; ?>
                         <div style="padding-bottom:1px;">
                             <label style="visibility:hidden">x</label>

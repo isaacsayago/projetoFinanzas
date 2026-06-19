@@ -160,6 +160,20 @@ if (!tableExists($pdo, 'notifications')) {
 }
 
 // ============================================================
+// 6. COLUNA shared_with_user_id na tabela expenses
+//    Marca lançamentos compartilhados entre dois usuários
+// ============================================================
+if (tableExists($pdo, 'expenses') && !columnExists($pdo, 'expenses', 'shared_with_user_id')) {
+    runSQL($pdo, "
+        ALTER TABLE expenses
+        ADD COLUMN shared_with_user_id INT(10) UNSIGNED NULL DEFAULT NULL AFTER user_id,
+        ADD INDEX idx_exp_shared (shared_with_user_id)
+    ", 'Adicionar coluna shared_with_user_id em expenses', $results, $errors);
+} else {
+    $results[] = 'SKIP — Coluna shared_with_user_id já existe em expenses';
+}
+
+// ============================================================
 // RESULTADO
 // ============================================================
 $hasErrors = count($errors) > 0;
