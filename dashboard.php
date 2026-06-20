@@ -176,6 +176,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 
+    // Pagar fatura inteira de um cartão
+    if (isset($_POST['action_pay_fatura'])) {
+        $fatCardId = (int)($_POST['fatura_card_id'] ?? 0);
+        $fatPeriod = trim($_POST['fatura_period'] ?? '');
+        if ($fatCardId && $fatPeriod) {
+            // Marcar todas as expenses desta fatura como pagas
+            $stmtPayFat = $pdo->prepare("
+                UPDATE expenses e
+                JOIN expense_card_link ecl ON ecl.expense_id = e.id
+                SET e.paid = 1, e.payment_date = COALESCE(e.payment_date, CURDATE())
+                WHERE ecl.card_id = :cid AND ecl.fatura_period = :period AND e.user_id = :uid
+            ");
+            $stmtPayFat->execute([':cid'=>$fatCardId, ':period'=>$fatPeriod, ':uid'=>$current_user_id]);
+        }
+        header("Location: " . $redirectUrl); exit;
+    }
+
     if (isset($_POST['edit_id']) && $_POST['edit_id'] !== '') {
         $id = (int)$_POST['edit_id'];
         $name = trim($_POST['name_single'] ?? '');
@@ -428,7 +445,7 @@ $pendingTotal = (float)($paidData['pendente'] ?? 0);
     --glow-danger: 0 0 20px rgba(255,45,85,0.15);
     --glow-success: 0 0 20px rgba(0,255,136,0.15);
     --glow-warning: 0 0 20px rgba(255,214,0,0.15);
-    --sidebar-w: 180px;
+    --sidebar-w: 220px;
     --radius: 12px;
 }
 
@@ -482,7 +499,7 @@ body::after {
 }
 
 .sidebar-logo {
-    padding: 14px 12px;
+    padding: 16px 12px;
     display: flex;
     align-items: center;
     gap: 8px;
@@ -490,8 +507,8 @@ body::after {
 }
 
 .sidebar-logo-icon {
-    width: 30px;
-    height: 30px;
+    width: 32px;
+    height: 32px;
     background: rgba(0,212,255,0.15);
     border: 1px solid rgba(0,212,255,0.3);
     border-radius: 10px;
@@ -502,18 +519,18 @@ body::after {
     box-shadow: 0 0 15px rgba(0,212,255,0.2);
 }
 
-.sidebar-logo-icon svg { width: 16px; height: 16px; color: var(--accent); }
+.sidebar-logo-icon svg { width: 18px; height: 18px; color: var(--accent); }
 
 .sidebar-logo-text {
     font-family: 'Space Mono', monospace;
-    font-size: 14px;
+    font-size: 15px;
     font-weight: 700;
     color: #fff;
     white-space: nowrap;
 }
 
 .sidebar-section {
-    padding: 12px 8px 4px;
+    padding: 14px 12px 4px;
 }
 
 .sidebar-section-label {
@@ -529,7 +546,7 @@ body::after {
 .period-nav {
     flex: 1;
     overflow-y: auto;
-    padding: 0 8px;
+    padding: 0 12px;
     scrollbar-width: thin;
     scrollbar-color: rgba(255,255,255,0.1) transparent;
 }
@@ -564,26 +581,26 @@ body::after {
     box-shadow: 0 0 12px rgba(0,212,255,0.1);
 }
 
-.period-item svg { width: 14px; height: 14px; flex-shrink: 0; opacity: 0.7; }
+.period-item svg { width: 16px; height: 16px; flex-shrink: 0; opacity: 0.7; }
 .period-item.active svg { opacity: 1; }
 
 .sidebar-footer {
-    padding: 12px 8px;
+    padding: 14px 12px;
     border-top: 1px solid rgba(255,255,255,0.07);
 }
 
 .user-info {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 6px 8px;
+    gap: 10px;
+    padding: 8px 10px;
     border-radius: 8px;
     margin-bottom: 6px;
 }
 
 .user-avatar {
-    width: 28px;
-    height: 28px;
+    width: 30px;
+    height: 30px;
     border-radius: 50%;
     background: var(--accent);
     display: flex;
@@ -609,13 +626,13 @@ body::after {
     color: rgba(255,255,255,0.4);
 }
 
-.sidebar-actions { display: flex; flex-direction: column; gap: 2px; }
+.sidebar-actions { display: flex; flex-direction: column; gap: 4px; }
 
 .sidebar-action {
     display: flex;
     align-items: center;
-    gap: 6px;
-    padding: 6px 8px;
+    gap: 8px;
+    padding: 7px 10px;
     border-radius: 8px;
     color: rgba(255,255,255,0.6);
     text-decoration: none;
@@ -631,7 +648,7 @@ body::after {
 }
 
 .sidebar-action:hover { background: rgba(255,255,255,0.07); color: #fff; }
-.sidebar-action svg { width: 14px; height: 14px; }
+.sidebar-action svg { width: 15px; height: 15px; }
 
 /* ===== MAIN ===== */
 .main {
@@ -1783,7 +1800,7 @@ body.light ::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
                         ?>
                         <tr>
                             <td>
-                                <div class="item-name"><?php if ($isFatura): ?><a href="cartoes.php?detail=<?= $r['card_id'] ?>" title="Ver detalhes do cartão" style="text-decoration:none;">💳 <?= safe($r['name']) ?></a><?php elseif ($isShared): ?><span title="Lançamento compartilhado" style="margin-right:4px;">👥</span><?= safe($r['name']) ?><?php else: ?><?= safe($r['name']) ?><?php endif; ?></div>
+                                <div class="item-name"><?php if ($isFatura): ?><a href="cartoes.php?view=<?= $r['card_id'] ?>" title="Ver detalhes do cartão" style="text-decoration:none;">💳 <?= safe($r['name']) ?></a><?php elseif ($isShared): ?><span title="Lançamento compartilhado" style="margin-right:4px;">👥</span><?= safe($r['name']) ?><?php else: ?><?= safe($r['name']) ?><?php endif; ?></div>
                                 <?php if (!empty($r['planned'])): ?>
                                 <span class="badge planned" style="margin-top:2px;font-size:10px;">Planificado</span>
                                 <?php endif; ?>
@@ -1817,7 +1834,24 @@ body.light ::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
                                     </a>
                                 </div>
                                 <?php elseif ($isFatura): ?>
-                                <a href="cartoes.php?detail=<?= $r['card_id'] ?>" style="font-size:11px;color:var(--accent);text-decoration:none;" title="Ver detalhes da fatura">Ver detalhes →</a>
+                                <div class="action-btns">
+                                    <?php if (!$r['paid']): ?>
+                                    <form method="post" style="display:inline;">
+                                        <input type="hidden" name="action_pay_fatura" value="1">
+                                        <input type="hidden" name="fatura_card_id" value="<?= (int)$r['card_id'] ?>">
+                                        <input type="hidden" name="fatura_period" value="<?= safe($r['period']) ?>">
+                                        <button type="submit" class="btn-icon toggle" title="Pagar fatura inteira" onclick="return confirm('Marcar TODOS os lançamentos desta fatura como pagos?')" style="width:auto;padding:3px 10px;border-radius:6px;font-size:11px;font-weight:600;font-family:\'Sora\',sans-serif;gap:4px;">
+                                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5" style="width:12px;height:12px;">
+                                                <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+                                            </svg>
+                                            Pagar Fatura
+                                        </button>
+                                    </form>
+                                    <?php endif; ?>
+                                    <a href="cartoes.php?view=<?= (int)$r['card_id'] ?>" class="btn-icon edit" title="Ver detalhes do cartão" style="width:auto;padding:3px 10px;border-radius:6px;font-size:11px;font-weight:500;font-family:'Sora',sans-serif;text-decoration:none;gap:4px;">
+                                        Detalhes
+                                    </a>
+                                </div>
                                 <?php else: ?>
                                 <span style="font-size:11px;color:var(--muted);">Somente visualização</span>
                                 <?php endif; ?>

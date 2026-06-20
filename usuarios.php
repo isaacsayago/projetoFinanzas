@@ -72,6 +72,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 // Lista de usuários
 $users = $pdo->query("SELECT id, nome, email, nivel, created_at FROM usuarios ORDER BY created_at ASC")->fetchAll(PDO::FETCH_ASSOC);
 
+$current_user_name = $_SESSION['nome'] ?? 'Administrador';
+$is_admin = true; // somente admin acessa esta página
+
 function safe($v){ return htmlspecialchars($v ?? '', ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); }
 ?>
 <!doctype html>
@@ -93,14 +96,21 @@ function safe($v){ return htmlspecialchars($v ?? '', ENT_QUOTES | ENT_SUBSTITUTE
     --surface: #0d1117;
     --surface2: #161b26;
     --accent: #00d4ff;
+    --accent-hover: #00b8e6;
+    --accent-light: rgba(0,212,255,0.1);
     --success: #00ff88;
     --success-light: rgba(0,255,136,0.1);
     --danger: #ff2d55;
     --danger-light: rgba(255,45,85,0.1);
     --warning: #ffd600;
+    --warning-light: rgba(255,214,0,0.1);
+    --purple: #a855f7;
+    --purple-light: rgba(168,85,247,0.1);
+    --glow-accent: 0 0 20px rgba(0,212,255,0.15);
+    --glow-purple: 0 0 20px rgba(168,85,247,0.15);
     --muted: #64748b;
     --border: rgba(255,255,255,0.08);
-    --sidebar-w: 240px;
+    --sidebar-w: 220px;
     --radius: 12px;
 }
 
@@ -125,6 +135,18 @@ body::before {
     z-index: 0;
 }
 
+body::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+        linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px);
+    background-size: 60px 60px;
+    pointer-events: none;
+    z-index: 0;
+}
+
 /* SIDEBAR */
 .sidebar {
     width: var(--sidebar-w);
@@ -134,73 +156,89 @@ body::before {
     top: 0; left: 0;
     display: flex;
     flex-direction: column;
+    overflow: hidden;
     z-index: 100;
+    transition: width 0.3s;
     border-right: 1px solid rgba(0,212,255,0.1);
 }
 
 .sidebar-logo {
-    padding: 20px;
+    padding: 16px 12px;
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
     border-bottom: 1px solid rgba(255,255,255,0.07);
 }
 
 .sidebar-logo-icon {
-    width: 36px; height: 36px;
+    width: 32px; height: 32px;
     background: rgba(0,212,255,0.15);
     border: 1px solid rgba(0,212,255,0.3);
     border-radius: 10px;
     display: flex;
     align-items: center;
     justify-content: center;
+    flex-shrink: 0;
     box-shadow: 0 0 15px rgba(0,212,255,0.2);
 }
 
-.sidebar-logo-icon svg { width: 20px; height: 20px; color: var(--accent); }
+.sidebar-logo-icon svg { width: 18px; height: 18px; color: var(--accent); }
 
 .sidebar-logo-text {
     font-family: 'Space Mono', monospace;
-    font-size: 16px;
+    font-size: 15px;
     font-weight: 700;
     color: #fff;
+    white-space: nowrap;
 }
 
+.sidebar-section { padding: 14px 12px 4px; }
+.sidebar-section-label { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: rgba(255,255,255,0.3); padding: 0 8px; margin-bottom: 6px; }
+
 .sidebar-nav {
-    flex: 1;
-    padding: 12px;
+    padding: 0 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
 }
 
 .nav-item {
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 9px 10px;
+    padding: 8px 10px;
     border-radius: 8px;
     color: rgba(255,255,255,0.6);
     text-decoration: none;
     font-size: 13px;
     font-weight: 500;
     transition: all 0.15s;
-    margin-bottom: 2px;
+    margin-bottom: 0;
 }
 
 .nav-item:hover { background: rgba(255,255,255,0.07); color: #fff; }
 .nav-item.active { background: rgba(0,212,255,0.12); color: var(--accent); border: 1px solid rgba(0,212,255,0.25); box-shadow: 0 0 12px rgba(0,212,255,0.1); }
-.nav-item svg { width: 15px; height: 15px; }
+.nav-item svg { width: 16px; height: 16px; flex-shrink: 0; }
 
 .sidebar-footer {
-    padding: 16px 12px;
+    padding: 14px 12px;
     border-top: 1px solid rgba(255,255,255,0.07);
+    margin-top: auto;
 }
 
-.btn-logout {
+.user-info { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 8px; margin-bottom: 8px; }
+.user-avatar-sb { width: 30px; height: 30px; border-radius: 50%; background: var(--accent); display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 600; color: #fff; flex-shrink: 0; }
+.user-name-sb { font-size: 12px; font-weight: 600; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.user-role-sb { font-size: 11px; color: rgba(255,255,255,0.4); }
+.sidebar-actions { display: flex; flex-direction: column; gap: 4px; }
+.sidebar-action {
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 9px 10px;
+    padding: 7px 10px;
     border-radius: 8px;
-    color: rgba(255,255,255,0.5);
+    color: rgba(255,255,255,0.6);
+    text-decoration: none;
     font-size: 12px;
     font-weight: 500;
     transition: all 0.15s;
@@ -210,12 +248,11 @@ body::before {
     width: 100%;
     font-family: 'Sora', sans-serif;
 }
-
-.btn-logout:hover { background: rgba(255,255,255,0.07); color: #fff; }
-.btn-logout svg { width: 15px; height: 15px; }
+.sidebar-action:hover { background: rgba(255,255,255,0.07); color: #fff; }
+.sidebar-action svg { width: 15px; height: 15px; }
 
 /* MAIN */
-.main { margin-left: var(--sidebar-w); flex: 1; }
+.main { margin-left: var(--sidebar-w); flex: 1; position: relative; z-index: 1; }
 
 .topbar {
     background: rgba(13,17,23,0.85);
@@ -463,6 +500,38 @@ body::before {
 @media (max-width: 900px) {
     .two-col { grid-template-columns: 1fr; }
 }
+
+/* LIGHT MODE */
+body.light {
+    --ink: #1e293b; --bg: #f0f2f7; --surface: #ffffff; --surface2: #f8fafc;
+    --accent: #2563eb; --accent-hover: #1d4ed8; --accent-light: rgba(37,99,235,0.1);
+    --success: #059669; --success-light: rgba(5,150,105,0.1);
+    --danger: #dc2626; --danger-light: rgba(220,38,38,0.1);
+    --warning: #d97706; --warning-light: rgba(217,119,6,0.1);
+    --purple: #7c3aed; --purple-light: rgba(124,58,237,0.1);
+    --muted: #64748b; --border: #e5e7eb;
+}
+body.light::before, body.light::after { display: none; }
+body.light .sidebar { background: #0d1117; border-right: 1px solid rgba(255,255,255,0.07); }
+body.light .sidebar-logo-icon { background: var(--accent); border-color: transparent; box-shadow: none; }
+body.light .sidebar-logo-icon svg { color: #fff; }
+body.light .nav-item.active { background: var(--accent); color: #fff; border-color: transparent; box-shadow: none; }
+body.light .topbar { background: var(--surface); backdrop-filter: none; }
+body.light .data-table tbody tr:hover { background: #fafbfc; }
+body.light .btn-primary { color: #fff; }
+body.light .btn-create { color: #fff; }
+body.light .field input, body.light .field select { background: #fff; }
+body.light .pass-input { background: #fff; }
+body.light .nivel-select { background: #fff; }
+
+/* RESPONSIVE */
+@media (max-width: 768px) {
+    .sidebar { width: 60px; }
+    .sidebar-logo-text, .sidebar-section-label, .nav-item span, .user-name-sb, .user-role-sb, .sidebar-action span { display: none; }
+    .main { margin-left: 60px; }
+    .topbar { padding: 12px 16px; }
+    .content { padding: 16px; }
+}
 </style>
 </head>
 <body>
@@ -477,30 +546,61 @@ body::before {
         <span class="sidebar-logo-text">Finanzas</span>
     </div>
 
-    <nav class="sidebar-nav">
+    <div class="sidebar-section">
+        <div class="sidebar-section-label">Menu</div>
+    </div>
+
+    <div class="sidebar-nav">
         <a href="dashboard.php" class="nav-item">
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+                <path stroke-linecap="round" stroke-linejoin="round" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zm10 0a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zm10 0a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
             </svg>
-            Dashboard
+            <span>Dashboard</span>
+        </a>
+        <a href="cartoes.php" class="nav-item">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+            </svg>
+            <span>Cartões</span>
+        </a>
+        <a href="compartilhamento.php" class="nav-item">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+            <span>Compartilhamento</span>
         </a>
         <a href="usuarios.php" class="nav-item active">
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
             </svg>
-            Usuários
+            <span>Usuários</span>
         </a>
-    </nav>
+    </div>
 
     <div class="sidebar-footer">
-        <form method="post" action="logout.php">
-            <button type="submit" class="btn-logout">
+        <div class="user-info">
+            <div class="user-avatar-sb"><?= mb_strtoupper(mb_substr($current_user_name, 0, 1)) ?></div>
+            <div>
+                <div class="user-name-sb"><?= safe($current_user_name) ?></div>
+                <div class="user-role-sb">Administrador</div>
+            </div>
+        </div>
+        <div class="sidebar-actions">
+            <a href="dashboard.php" class="sidebar-action">
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
                 </svg>
-                Sair
-            </button>
-        </form>
+                <span>Voltar</span>
+            </a>
+            <form method="post" action="logout.php" style="width:100%">
+                <button type="submit" class="sidebar-action">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                    </svg>
+                    <span>Sair</span>
+                </button>
+            </form>
+        </div>
     </div>
 </aside>
 
@@ -509,6 +609,11 @@ body::before {
         <div>
             <h1>Gestão de Usuários</h1>
             <p>Painel exclusivo do administrador</p>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;">
+            <button class="btn-theme-toggle" id="themeToggle" title="Alternar tema" onclick="toggleTheme()" style="width:36px;height:36px;border-radius:8px;border:1px solid var(--border);background:var(--surface2);cursor:pointer;font-size:16px;">
+                <span id="themeIcon">☀️</span>
+            </button>
         </div>
     </div>
 
@@ -648,5 +753,21 @@ body::before {
     </div>
 </main>
 
+<script>
+(function() {
+    const saved = localStorage.getItem('finanzas_theme');
+    if (saved === 'light') {
+        document.body.classList.add('light');
+        document.getElementById('themeIcon').textContent = '🌙';
+    } else {
+        document.getElementById('themeIcon').textContent = '☀️';
+    }
+})();
+function toggleTheme() {
+    const isLight = document.body.classList.toggle('light');
+    document.getElementById('themeIcon').textContent = isLight ? '🌙' : '☀️';
+    localStorage.setItem('finanzas_theme', isLight ? 'light' : 'dark');
+}
+</script>
 </body>
 </html>

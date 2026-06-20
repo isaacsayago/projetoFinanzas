@@ -165,6 +165,59 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         if ($card_view) { header("Location: cartoes.php?view={$card_view}"); exit; }
     }
+
+    // Limpar cartão — excluir TODOS os lançamentos vinculados
+    if (isset($_POST['action_card']) && $_POST['action_card'] === 'clear_card') {
+        $card_id = (int)($_POST['card_id'] ?? 0);
+        if ($card_id) {
+            $chk = $pdo->prepare("SELECT id FROM credit_cards WHERE id=:id AND user_id=:uid");
+            $chk->execute([':id'=>$card_id, ':uid'=>$current_user_id]);
+            if ($chk->fetch()) {
+                // Buscar todas as expenses vinculadas
+                $expIds = $pdo->prepare("SELECT expense_id FROM expense_card_link WHERE card_id = :cid");
+                $expIds->execute([':cid'=>$card_id]);
+                $ids = $expIds->fetchAll(PDO::FETCH_COLUMN);
+                if ($ids) {
+                    $placeholders = implode(',', array_fill(0, count($ids), '?'));
+                    $pdo->prepare("DELETE FROM expense_card_link WHERE card_id = ?")->execute([$card_id]);
+                    $pdo->prepare("DELETE FROM expenses WHERE id IN ({$placeholders}) AND user_id = ?")->execute(array_merge($ids, [$current_user_id]));
+                }
+                $msg = "Todos os lançamentos do cartão foram removidos!"; $msgType = 'success';
+            }
+        }
+        header("Location: cartoes.php?view={$card_id}"); exit;
+    }
+
+    // Toggle pago/pendente de lançamento individual do cartão
+    if (isset($_POST['action_card']) && $_POST['action_card'] === 'toggle_expense_paid') {
+        $expense_id = (int)($_POST['expense_id'] ?? 0);
+        $card_view = (int)($_POST['card_view'] ?? 0);
+        if ($expense_id) {
+            $chk = $pdo->prepare("SELECT id, paid FROM expenses WHERE id=:id AND user_id=:uid");
+            $chk->execute([':id'=>$expense_id, ':uid'=>$current_user_id]);
+            $row = $chk->fetch(PDO::FETCH_ASSOC);
+            if ($row) {
+                $newPaid = $row['paid'] ? 0 : 1;
+                $pdo->prepare("UPDATE expenses SET paid=:paid, payment_date=CASE WHEN :paid2=1 THEN COALESCE(payment_date, CURDATE()) ELSE NULL END WHERE id=:id AND user_id=:uid")
+                    ->execute([':paid'=>$newPaid, ':paid2'=>$newPaid, ':id'=>$expense_id, ':uid'=>$current_user_id]);
+            }
+        }
+        if ($card_view) { header("Location: cartoes.php?view={$card_view}"); exit; }
+    }
+
+    // Editar lançamento individual do cartão
+    if (isset($_POST['action_card']) && $_POST['action_card'] === 'edit_expense') {
+        $expense_id = (int)($_POST['expense_id'] ?? 0);
+        $card_view = (int)($_POST['card_view'] ?? 0);
+        $exp_name = trim($_POST['exp_name'] ?? '');
+        $exp_amount = str_replace(',', '.', trim($_POST['exp_amount'] ?? ''));
+        if ($expense_id && $exp_name && $exp_amount && is_numeric($exp_amount)) {
+            $pdo->prepare("UPDATE expenses SET name=:name, amount=:amount WHERE id=:id AND user_id=:uid")
+                ->execute([':name'=>$exp_name, ':amount'=>$exp_amount, ':id'=>$expense_id, ':uid'=>$current_user_id]);
+            $msg = "Lançamento atualizado!"; $msgType = 'success';
+        }
+        if ($card_view) { header("Location: cartoes.php?view={$card_view}"); exit; }
+    }
 }
 
 // -------------------- DADOS --------------------
@@ -252,7 +305,7 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
     --glow-success: 0 0 20px rgba(0,255,136,0.15);
     --glow-warning: 0 0 20px rgba(255,214,0,0.15);
     --glow-purple: 0 0 20px rgba(168,85,247,0.15);
-    --sidebar-w: 240px;
+    --sidebar-w: 220px;
     --radius: 12px;
 }
 
@@ -304,12 +357,12 @@ body::after {
     border-right: 1px solid rgba(0,212,255,0.1);
 }
 
-.sidebar-logo { padding: 20px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid rgba(255,255,255,0.07); }
-.sidebar-logo-icon { width: 36px; height: 36px; background: rgba(0,212,255,0.15); border: 1px solid rgba(0,212,255,0.3); border-radius: 10px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; box-shadow: 0 0 15px rgba(0,212,255,0.2); }
-.sidebar-logo-icon svg { width: 20px; height: 20px; color: var(--accent); }
-.sidebar-logo-text { font-family: 'Space Mono', monospace; font-size: 16px; font-weight: 700; color: #fff; white-space: nowrap; }
+.sidebar-logo { padding: 16px 12px; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid rgba(255,255,255,0.07); }
+.sidebar-logo-icon { width: 32px; height: 32px; background: rgba(0,212,255,0.15); border: 1px solid rgba(0,212,255,0.3); border-radius: 10px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; box-shadow: 0 0 15px rgba(0,212,255,0.2); }
+.sidebar-logo-icon svg { width: 18px; height: 18px; color: var(--accent); }
+.sidebar-logo-text { font-family: 'Space Mono', monospace; font-size: 15px; font-weight: 700; color: #fff; white-space: nowrap; }
 
-.sidebar-section { padding: 16px 12px 4px; }
+.sidebar-section { padding: 14px 12px 4px; }
 .sidebar-section-label { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: rgba(255,255,255,0.3); padding: 0 8px; margin-bottom: 6px; }
 
 .sidebar-nav { padding: 0 12px; display: flex; flex-direction: column; gap: 2px; }
@@ -322,9 +375,9 @@ body::after {
 .nav-item.active { background: rgba(0,212,255,0.12); color: var(--accent); border: 1px solid rgba(0,212,255,0.25); box-shadow: 0 0 12px rgba(0,212,255,0.1); }
 .nav-item svg { width: 16px; height: 16px; flex-shrink: 0; }
 
-.sidebar-footer { padding: 16px 12px; border-top: 1px solid rgba(255,255,255,0.07); margin-top: auto; }
+.sidebar-footer { padding: 14px 12px; border-top: 1px solid rgba(255,255,255,0.07); margin-top: auto; }
 .user-info { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 8px; margin-bottom: 8px; }
-.user-avatar { width: 32px; height: 32px; border-radius: 50%; background: var(--accent); display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 600; color: #fff; flex-shrink: 0; }
+.user-avatar { width: 30px; height: 30px; border-radius: 50%; background: var(--accent); display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 600; color: #fff; flex-shrink: 0; }
 .user-name { font-size: 12px; font-weight: 600; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .user-role { font-size: 11px; color: rgba(255,255,255,0.4); }
 .sidebar-actions { display: flex; flex-direction: column; gap: 4px; }
@@ -540,10 +593,16 @@ body::after {
 /* ===== LIGHT THEME ===== */
 body.light { --ink: #1e293b; --bg: #f0f2f7; --surface: #ffffff; --surface2: #f8fafc; --accent: #2563eb; --accent-hover: #1d4ed8; --accent-light: rgba(37,99,235,0.1); --success: #059669; --success-light: rgba(5,150,105,0.1); --danger: #dc2626; --danger-light: rgba(220,38,38,0.1); --warning: #d97706; --warning-light: rgba(217,119,6,0.1); --purple: #7c3aed; --purple-light: rgba(124,58,237,0.1); --muted: #64748b; --border: #e5e7eb; }
 body.light::before, body.light::after { display: none; }
-body.light .sidebar { background: #fff; border-right: 1px solid #e5e7eb; }
-body.light .sidebar-logo-icon { background: var(--accent-light); border-color: var(--accent); box-shadow: none; }
-body.light .sidebar-logo-text { color: #1e293b; }
+body.light .sidebar { background: #0d1117; border-right: 1px solid rgba(255,255,255,0.07); }
+body.light .sidebar-logo-icon { background: var(--accent); border-color: transparent; box-shadow: none; }
+body.light .sidebar-logo-icon svg { color: #fff; }
+body.light .nav-item.active { background: var(--accent); color: #fff; border-color: transparent; box-shadow: none; }
 body.light .topbar { background: var(--surface); backdrop-filter: none; }
+body.light .stat-card { border-color: var(--border); }
+body.light .data-table tbody tr:hover { background: #fafbfc; }
+body.light .cc-number { color: rgba(30,41,59,0.5); }
+body.light .cc-usage-bar { background: rgba(0,0,0,0.06); }
+body.light .credit-card-visual:hover { box-shadow: 0 8px 32px rgba(0,0,0,0.1); }
 
 /* ===== RESPONSIVE ===== */
 @media (max-width: 1100px) { .stat-grid { grid-template-columns: repeat(3, 1fr); } .detail-grid { grid-template-columns: 1fr; } }
@@ -729,6 +788,10 @@ body.light .topbar { background: var(--surface); backdrop-filter: none; }
                 </table>
 
                 <div style="margin-top:16px; display:flex; gap:8px; flex-wrap:wrap;">
+                    <button type="button" class="btn-cancel" style="color:var(--accent);border-color:rgba(0,212,255,0.3);" onclick="openEditCardModal()">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;margin-right:4px;"><path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
+                        Editar cartão
+                    </button>
                     <form method="post" style="display:inline;">
                         <input type="hidden" name="action_card" value="toggle_status">
                         <input type="hidden" name="card_id" value="<?= $viewCard['id'] ?>">
@@ -751,14 +814,24 @@ body.light .topbar { background: var(--surface); backdrop-filter: none; }
                 <h3>Próximas Faturas</h3>
                 <?php if ($viewFaturas): ?>
                 <table class="data-table">
-                    <thead><tr><th>Fatura</th><th>Total</th></tr></thead>
+                    <thead><tr><th>Fatura</th><th>Lançamentos</th><th>Total Previsto</th></tr></thead>
                     <tbody>
                     <?php foreach ($viewFaturas as $fat): ?>
+                    <?php
+                        // Contar lançamentos e parcelas desta fatura
+                        $stmtFatCount = $pdo->prepare("SELECT COUNT(*) as qtd FROM expense_card_link ecl JOIN expenses e ON e.id = ecl.expense_id WHERE ecl.card_id = :cid AND ecl.fatura_period = :period");
+                        $stmtFatCount->execute([':cid'=>$viewCard['id'], ':period'=>$fat['period']]);
+                        $fatCount = (int)$stmtFatCount->fetchColumn();
+                    ?>
                     <tr>
-                        <td><?php
-                            $dt = DateTime::createFromFormat('Y-m-d', $fat['period'] . '-01');
-                            echo $dt ? mb_strtoupper($dt->format('M/Y'), 'UTF-8') : $fat['period'];
-                        ?></td>
+                        <td>
+                            <div style="font-weight:600;"><?php
+                                $dt = DateTime::createFromFormat('Y-m-d', $fat['period'] . '-01');
+                                echo $dt ? mb_strtoupper($dt->format('M/Y'), 'UTF-8') : $fat['period'];
+                            ?></div>
+                            <div style="font-size:11px;color:var(--muted);">Venc. dia <?= $viewCard['dia_vencimento'] ?></div>
+                        </td>
+                        <td style="text-align:center;"><span class="badge" style="background:var(--accent-light);color:var(--accent);border:1px solid rgba(0,212,255,0.2);"><?= $fatCount ?> itens</span></td>
                         <td class="item-amount" style="color:var(--danger)"><?= money($fat['total']) ?></td>
                     </tr>
                     <?php endforeach; ?>
@@ -785,19 +858,37 @@ body.light .topbar { background: var(--surface); backdrop-filter: none; }
 
         <!-- Histórico de compras -->
         <div class="detail-section">
-            <h2>
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg>
-                Histórico de Compras
-            </h2>
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+                <h2 style="margin-bottom:0;">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg>
+                    Histórico de Compras
+                </h2>
+                <?php if ($viewCompras): ?>
+                <form method="post" style="display:inline;">
+                    <input type="hidden" name="action_card" value="clear_card">
+                    <input type="hidden" name="card_id" value="<?= $viewCard['id'] ?>">
+                    <button type="submit" class="btn-cancel" style="color:var(--danger);border-color:rgba(255,45,85,0.3);font-size:12px;padding:6px 14px;" onclick="return confirm('ATENÇÃO: Esta ação irá EXCLUIR PERMANENTEMENTE todos os lançamentos e parcelas vinculados a este cartão. Deseja continuar?')">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;margin-right:4px;"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                        Limpar Cartão
+                    </button>
+                </form>
+                <?php endif; ?>
+            </div>
             <?php if ($viewCompras): ?>
             <div class="detail-panel" style="overflow-x:auto;">
                 <table class="data-table">
-                    <thead><tr><th>Descrição</th><th>Valor</th><th>Data</th><th>Fatura</th><th>Status</th><th></th></tr></thead>
+                    <thead><tr><th>Descrição</th><th>Valor</th><th>Data</th><th>Fatura</th><th>Status</th><th>Ações</th></tr></thead>
                     <tbody>
                     <?php foreach ($viewCompras as $compra): ?>
-                    <tr>
-                        <td><?= safe($compra['name']) ?></td>
-                        <td class="item-amount"><?= money($compra['amount']) ?></td>
+                    <tr id="row-<?= (int)$compra['id'] ?>">
+                        <td>
+                            <span class="display-field"><?= safe($compra['name']) ?></span>
+                            <input type="text" class="edit-field-input" name="exp_name" value="<?= safe($compra['name']) ?>" style="display:none;width:100%;padding:6px 8px;border:1.5px solid var(--border);border-radius:6px;font-family:'Sora',sans-serif;font-size:12px;color:var(--ink);background:var(--surface2);">
+                        </td>
+                        <td>
+                            <span class="display-field item-amount"><?= money($compra['amount']) ?></span>
+                            <input type="text" class="edit-field-input" name="exp_amount" value="<?= number_format((float)$compra['amount'], 2, ',', '') ?>" style="display:none;width:90px;padding:6px 8px;border:1.5px solid var(--border);border-radius:6px;font-family:'Space Mono',monospace;font-size:12px;color:var(--ink);background:var(--surface2);">
+                        </td>
                         <td class="item-date"><?php
                             $dt = new DateTime($compra['due_date']);
                             echo $dt->format('d/m/Y');
@@ -806,18 +897,49 @@ body.light .topbar { background: var(--surface); backdrop-filter: none; }
                             $dt = DateTime::createFromFormat('Y-m-d', $compra['fatura_period'] . '-01');
                             echo $dt ? mb_strtoupper($dt->format('M/Y'), 'UTF-8') : $compra['fatura_period'];
                         ?></td>
-                        <td><span class="badge <?= $compra['paid'] ? 'paid' : 'unpaid' ?>"><?= $compra['paid'] ? 'Pago' : 'Pendente' ?></span></td>
                         <td>
                             <form method="post" style="display:inline;">
-                                <input type="hidden" name="action_card" value="delete_expense">
+                                <input type="hidden" name="action_card" value="toggle_expense_paid">
                                 <input type="hidden" name="expense_id" value="<?= (int)$compra['id'] ?>">
                                 <input type="hidden" name="card_view" value="<?= $viewCard['id'] ?>">
-                                <button type="submit" title="Excluir lançamento" onclick="return confirm('Excluir este lançamento do cartão?')" style="width:28px;height:28px;border-radius:6px;border:1px solid rgba(255,45,85,0.2);background:rgba(255,45,85,0.08);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;transition:all 0.15s;color:var(--danger);">
-                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;">
-                                        <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                                    </svg>
+                                <button type="submit" title="Alternar Pago/Pendente" class="badge <?= $compra['paid'] ? 'paid' : 'unpaid' ?>" style="cursor:pointer;border:none;font-family:'Sora',sans-serif;">
+                                    <?= $compra['paid'] ? 'Pago' : 'Pendente' ?>
                                 </button>
                             </form>
+                        </td>
+                        <td>
+                            <div style="display:flex;gap:4px;align-items:center;">
+                                <!-- Botão Editar (toggle inline) -->
+                                <button type="button" title="Editar lançamento" onclick="toggleEditRow(<?= (int)$compra['id'] ?>)" style="width:28px;height:28px;border-radius:6px;border:1px solid rgba(255,214,0,0.2);background:rgba(255,214,0,0.08);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;transition:all 0.15s;color:var(--warning);">
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;">
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                                    </svg>
+                                </button>
+                                <!-- Botão Salvar edição (hidden por padrão) -->
+                                <form method="post" style="display:inline;" id="save-form-<?= (int)$compra['id'] ?>" class="save-edit-form" data-id="<?= (int)$compra['id'] ?>">
+                                    <input type="hidden" name="action_card" value="edit_expense">
+                                    <input type="hidden" name="expense_id" value="<?= (int)$compra['id'] ?>">
+                                    <input type="hidden" name="card_view" value="<?= $viewCard['id'] ?>">
+                                    <input type="hidden" name="exp_name" class="save-name" value="">
+                                    <input type="hidden" name="exp_amount" class="save-amount" value="">
+                                    <button type="submit" title="Salvar alterações" onclick="return prepareSaveEdit(<?= (int)$compra['id'] ?>)" style="display:none;width:28px;height:28px;border-radius:6px;border:1px solid rgba(0,255,136,0.2);background:rgba(0,255,136,0.08);cursor:pointer;align-items:center;justify-content:center;transition:all 0.15s;color:var(--success);" class="save-btn">
+                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;">
+                                            <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+                                        </svg>
+                                    </button>
+                                </form>
+                                <!-- Botão Excluir -->
+                                <form method="post" style="display:inline;">
+                                    <input type="hidden" name="action_card" value="delete_expense">
+                                    <input type="hidden" name="expense_id" value="<?= (int)$compra['id'] ?>">
+                                    <input type="hidden" name="card_view" value="<?= $viewCard['id'] ?>">
+                                    <button type="submit" title="Excluir lançamento" onclick="return confirm('Excluir este lançamento do cartão?')" style="width:28px;height:28px;border-radius:6px;border:1px solid rgba(255,45,85,0.2);background:rgba(255,45,85,0.08);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;transition:all 0.15s;color:var(--danger);">
+                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;">
+                                            <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                        </svg>
+                                    </button>
+                                </form>
+                            </div>
                         </td>
                     </tr>
                     <?php endforeach; ?>
@@ -928,6 +1050,63 @@ body.light .topbar { background: var(--surface); backdrop-filter: none; }
 
     </div><!-- /content -->
 </main>
+
+<!-- ===== MODAL EDITAR CARTÃO ===== -->
+<?php if ($viewCard): ?>
+<div class="modal-overlay" id="editCardModal" onclick="if(event.target===this)this.classList.remove('open')">
+    <div class="modal">
+        <div class="modal-header">
+            <div class="modal-title">Editar Cartão — <?= safe($viewCard['nome']) ?></div>
+            <button class="modal-close" onclick="document.getElementById('editCardModal').classList.remove('open')">×</button>
+        </div>
+        <form method="post">
+            <input type="hidden" name="action_card" value="edit">
+            <input type="hidden" name="card_id" value="<?= $viewCard['id'] ?>">
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>Nome do cartão *</label>
+                    <input type="text" name="card_nome" value="<?= safe($viewCard['nome']) ?>" required>
+                </div>
+                <div class="form-group">
+                    <label>Titular do cartão *</label>
+                    <input type="text" name="card_titular" value="<?= safe($viewCard['titular']) ?>" required>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Limite do cartão *</label>
+                        <input type="text" name="card_limite" inputmode="decimal" value="<?= number_format((float)$viewCard['limite'], 2, ',', '') ?>" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Cartão adicional de</label>
+                        <select name="card_adicional_de">
+                            <option value="">Nenhum (cartão principal)</option>
+                            <?php foreach ($allCards as $c): ?>
+                            <?php if ($c['ativo'] && !$c['cartao_adicional_de'] && $c['id'] != $viewCard['id']): ?>
+                            <option value="<?= $c['id'] ?>" <?= ($viewCard['cartao_adicional_de'] == $c['id']) ? 'selected' : '' ?>><?= safe($c['nome']) ?></option>
+                            <?php endif; ?>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Dia de vencimento da fatura *</label>
+                        <input type="number" name="card_dia_vencimento" min="1" max="31" value="<?= (int)$viewCard['dia_vencimento'] ?>" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Dia de fechamento da fatura *</label>
+                        <input type="number" name="card_dia_fechamento" min="1" max="31" value="<?= (int)$viewCard['dia_fechamento'] ?>" required>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn-cancel" onclick="document.getElementById('editCardModal').classList.remove('open')">Cancelar</button>
+                <button type="submit" class="btn-save">Salvar alterações</button>
+            </div>
+        </form>
+    </div>
+</div>
+<?php endif; ?>
 
 <!-- ===== MODAL NOVO CARTÃO ===== -->
 <div class="modal-overlay" id="cardModal" onclick="if(event.target===this)this.classList.remove('open')">
@@ -1097,12 +1276,48 @@ function toggleSensitiveFields() {
     document.getElementById('sensitiveFields').style.display = sel.value === '1' ? '' : 'none';
 }
 
-// Keyboard: Escape fecha modal
+// Keyboard: Escape fecha modais
 document.addEventListener('keydown', e => {
     if (e.key === 'Escape') {
         document.getElementById('cardModal').classList.remove('open');
+        var ecm = document.getElementById('editCardModal');
+        if (ecm) ecm.classList.remove('open');
     }
 });
+
+// Abrir modal de editar cartão
+function openEditCardModal() {
+    var modal = document.getElementById('editCardModal');
+    if (modal) modal.classList.add('open');
+}
+
+// Toggle edição inline no histórico de compras
+function toggleEditRow(id) {
+    var row = document.getElementById('row-' + id);
+    if (!row) return;
+    var displays = row.querySelectorAll('.display-field');
+    var inputs = row.querySelectorAll('.edit-field-input');
+    var saveBtn = row.querySelector('.save-btn');
+
+    var isEditing = inputs[0].style.display !== 'none';
+    displays.forEach(el => el.style.display = isEditing ? '' : 'none');
+    inputs.forEach(el => el.style.display = isEditing ? 'none' : '');
+    if (saveBtn) saveBtn.style.display = isEditing ? 'none' : 'inline-flex';
+}
+
+// Preparar dados para salvar edição
+function prepareSaveEdit(id) {
+    var row = document.getElementById('row-' + id);
+    if (!row) return false;
+    var nameInput = row.querySelector('input[name="exp_name"]');
+    var amountInput = row.querySelector('input[name="exp_amount"]');
+    var form = document.getElementById('save-form-' + id);
+    if (form && nameInput && amountInput) {
+        form.querySelector('.save-name').value = nameInput.value;
+        form.querySelector('.save-amount').value = amountInput.value;
+    }
+    return true;
+}
 </script>
 </body>
 </html>

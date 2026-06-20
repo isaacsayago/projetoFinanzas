@@ -151,7 +151,10 @@ function getProximasFaturas(PDO $pdo, int $cardId, int $mesesFuturos = 6): array
     $currentPeriod = date('Y-m');
 
     $stmt = $pdo->prepare("
-        SELECT ecl.fatura_period, COALESCE(SUM(e.amount), 0) as total
+        SELECT ecl.fatura_period,
+               COALESCE(SUM(e.amount), 0) as total,
+               COUNT(e.id) as qtd_lancamentos,
+               SUM(CASE WHEN e.paid = 1 THEN 1 ELSE 0 END) as qtd_pagos
         FROM expense_card_link ecl
         JOIN expenses e ON e.id = ecl.expense_id
         WHERE ecl.card_id = :card_id AND ecl.fatura_period >= :current
