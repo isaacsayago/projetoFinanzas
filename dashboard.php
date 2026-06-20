@@ -1834,22 +1834,25 @@ body.light ::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
                                     </a>
                                 </div>
                                 <?php elseif ($isFatura): ?>
-                                <div class="action-btns">
+                                <div class="action-btns" style="flex-wrap:wrap;justify-content:flex-end;">
                                     <?php if (!$r['paid']): ?>
                                     <form method="post" style="display:inline;">
                                         <input type="hidden" name="action_pay_fatura" value="1">
                                         <input type="hidden" name="fatura_card_id" value="<?= (int)$r['card_id'] ?>">
                                         <input type="hidden" name="fatura_period" value="<?= safe($r['period']) ?>">
-                                        <button type="submit" class="btn-icon toggle" title="Pagar fatura inteira" onclick="return confirm('Marcar TODOS os lançamentos desta fatura como pagos?')" style="width:auto;padding:3px 10px;border-radius:6px;font-size:11px;font-weight:600;font-family:\'Sora\',sans-serif;gap:4px;">
+                                        <button type="submit" class="btn-icon toggle" title="Pagar fatura inteira" onclick="return confirm('Marcar TODOS os lançamentos desta fatura como pagos?')" style="width:auto;padding:4px 10px;border-radius:6px;font-size:11px;font-weight:600;font-family:'Sora',sans-serif;gap:4px;white-space:nowrap;">
                                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5" style="width:12px;height:12px;">
                                                 <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
                                             </svg>
-                                            Pagar Fatura
+                                            Pagar
                                         </button>
                                     </form>
                                     <?php endif; ?>
-                                    <a href="cartoes.php?view=<?= (int)$r['card_id'] ?>" class="btn-icon edit" title="Ver detalhes do cartão" style="width:auto;padding:3px 10px;border-radius:6px;font-size:11px;font-weight:500;font-family:'Sora',sans-serif;text-decoration:none;gap:4px;">
-                                        Detalhes
+                                    <a href="cartoes.php?view=<?= (int)$r['card_id'] ?>" class="btn-icon edit" title="Ver detalhes do cartão" style="width:auto;padding:4px 10px;border-radius:6px;font-size:11px;font-weight:500;font-family:'Sora',sans-serif;text-decoration:none;gap:4px;white-space:nowrap;">
+                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" style="width:12px;height:12px;">
+                                            <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                                        </svg>
+                                        Ver
                                     </a>
                                 </div>
                                 <?php else: ?>

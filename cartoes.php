@@ -817,33 +817,26 @@ body.light .credit-card-visual:hover { box-shadow: 0 8px 32px rgba(0,0,0,0.1); }
                     <thead><tr><th>Fatura</th><th>Lançamentos</th><th>Total Previsto</th></tr></thead>
                     <tbody>
                     <?php foreach ($viewFaturas as $fat): ?>
-                    <?php
-                        // Contar lançamentos e parcelas desta fatura
-                        $stmtFatCount = $pdo->prepare("SELECT COUNT(*) as qtd FROM expense_card_link ecl JOIN expenses e ON e.id = ecl.expense_id WHERE ecl.card_id = :cid AND ecl.fatura_period = :period");
-                        $stmtFatCount->execute([':cid'=>$viewCard['id'], ':period'=>$fat['period']]);
-                        $fatCount = (int)$stmtFatCount->fetchColumn();
-                    ?>
                     <tr>
                         <td>
                             <div style="font-weight:600;"><?php
-                                $dtFat = DateTime::createFromFormat('Y-m-d', $fat['period'] . '-01');
+                                $dtFat = DateTime::createFromFormat('Y-m-d', $fat['fatura_period'] . '-01');
                                 if ($dtFat) {
                                     $meses = ['JAN','FEV','MAR','ABR','MAI','JUN','JUL','AGO','SET','OUT','NOV','DEZ'];
                                     echo $meses[(int)$dtFat->format('n') - 1] . '/' . $dtFat->format('Y');
                                 } else {
-                                    echo $fat['period'];
+                                    echo $fat['fatura_period'];
                                 }
                             ?></div>
                             <?php
-                                // Calcular data de vencimento efetiva deste mês
-                                $fatY = (int)substr($fat['period'], 0, 4);
-                                $fatM = (int)substr($fat['period'], 5, 2);
+                                $fatY = (int)substr($fat['fatura_period'], 0, 4);
+                                $fatM = (int)substr($fat['fatura_period'], 5, 2);
                                 $lastDayFat = (int)(new DateTime("$fatY-$fatM-01"))->format('t');
                                 $diaVencEfetivo = min((int)$viewCard['dia_vencimento'], $lastDayFat);
                             ?>
                             <div style="font-size:11px;color:var(--muted);">Venc. <?= sprintf('%02d/%02d/%04d', $diaVencEfetivo, $fatM, $fatY) ?></div>
                         </td>
-                        <td style="text-align:center;"><span class="badge" style="background:var(--accent-light);color:var(--accent);border:1px solid rgba(0,212,255,0.2);"><?= $fatCount ?> itens</span></td>
+                        <td style="text-align:center;"><span class="badge" style="background:var(--accent-light);color:var(--accent);border:1px solid rgba(0,212,255,0.2);"><?= (int)$fat['qtd_lancamentos'] ?> itens</span></td>
                         <td class="item-amount" style="color:var(--danger)"><?= money($fat['total']) ?></td>
                     </tr>
                     <?php endforeach; ?>
