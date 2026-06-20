@@ -305,7 +305,7 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
     --glow-success: 0 0 20px rgba(0,255,136,0.15);
     --glow-warning: 0 0 20px rgba(255,214,0,0.15);
     --glow-purple: 0 0 20px rgba(168,85,247,0.15);
-    --sidebar-w: 220px;
+    --sidebar-w: 180px;
     --radius: 12px;
 }
 
@@ -357,33 +357,33 @@ body::after {
     border-right: 1px solid rgba(0,212,255,0.1);
 }
 
-.sidebar-logo { padding: 16px 12px; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid rgba(255,255,255,0.07); }
-.sidebar-logo-icon { width: 32px; height: 32px; background: rgba(0,212,255,0.15); border: 1px solid rgba(0,212,255,0.3); border-radius: 10px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; box-shadow: 0 0 15px rgba(0,212,255,0.2); }
-.sidebar-logo-icon svg { width: 18px; height: 18px; color: var(--accent); }
-.sidebar-logo-text { font-family: 'Space Mono', monospace; font-size: 15px; font-weight: 700; color: #fff; white-space: nowrap; }
+.sidebar-logo { padding: 14px 10px; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid rgba(255,255,255,0.07); }
+.sidebar-logo-icon { width: 28px; height: 28px; background: rgba(0,212,255,0.15); border: 1px solid rgba(0,212,255,0.3); border-radius: 10px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; box-shadow: 0 0 15px rgba(0,212,255,0.2); }
+.sidebar-logo-icon svg { width: 15px; height: 15px; color: var(--accent); }
+.sidebar-logo-text { font-family: 'Space Mono', monospace; font-size: 13px; font-weight: 700; color: #fff; white-space: nowrap; }
 
-.sidebar-section { padding: 14px 12px 4px; }
+.sidebar-section { padding: 12px 8px 4px; }
 .sidebar-section-label { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: rgba(255,255,255,0.3); padding: 0 8px; margin-bottom: 6px; }
 
-.sidebar-nav { padding: 0 12px; display: flex; flex-direction: column; gap: 2px; }
+.sidebar-nav { padding: 0 8px; display: flex; flex-direction: column; gap: 2px; }
 
 .nav-item {
     display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 8px;
-    color: rgba(255,255,255,0.6); text-decoration: none; font-size: 13px; font-weight: 500; transition: all 0.15s;
+    color: rgba(255,255,255,0.6); text-decoration: none; font-size: 12px; font-weight: 500; transition: all 0.15s;
 }
 .nav-item:hover { background: rgba(255,255,255,0.07); color: #fff; }
 .nav-item.active { background: rgba(0,212,255,0.12); color: var(--accent); border: 1px solid rgba(0,212,255,0.25); box-shadow: 0 0 12px rgba(0,212,255,0.1); }
-.nav-item svg { width: 16px; height: 16px; flex-shrink: 0; }
+.nav-item svg { width: 14px; height: 14px; flex-shrink: 0; }
 
-.sidebar-footer { padding: 14px 12px; border-top: 1px solid rgba(255,255,255,0.07); margin-top: auto; }
-.user-info { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 8px; margin-bottom: 8px; }
-.user-avatar { width: 30px; height: 30px; border-radius: 50%; background: var(--accent); display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 600; color: #fff; flex-shrink: 0; }
+.sidebar-footer { padding: 10px 8px; border-top: 1px solid rgba(255,255,255,0.07); margin-top: auto; }
+.user-info { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 8px; margin-bottom: 8px; }
+.user-avatar { width: 26px; height: 26px; border-radius: 50%; background: var(--accent); display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 600; color: #fff; flex-shrink: 0; }
 .user-name { font-size: 12px; font-weight: 600; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .user-role { font-size: 11px; color: rgba(255,255,255,0.4); }
 .sidebar-actions { display: flex; flex-direction: column; gap: 4px; }
-.sidebar-action { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 8px; color: rgba(255,255,255,0.6); text-decoration: none; font-size: 12px; font-weight: 500; transition: all 0.15s; border: none; background: none; cursor: pointer; width: 100%; }
+.sidebar-action { display: flex; align-items: center; gap: 6px; padding: 5px 8px; border-radius: 8px; color: rgba(255,255,255,0.6); text-decoration: none; font-size: 12px; font-weight: 500; transition: all 0.15s; border: none; background: none; cursor: pointer; width: 100%; }
 .sidebar-action:hover { background: rgba(255,255,255,0.07); color: #fff; }
-.sidebar-action svg { width: 15px; height: 15px; }
+.sidebar-action svg { width: 13px; height: 13px; }
 
 /* ===== MAIN ===== */
 .main {
@@ -826,10 +826,22 @@ body.light .credit-card-visual:hover { box-shadow: 0 8px 32px rgba(0,0,0,0.1); }
                     <tr>
                         <td>
                             <div style="font-weight:600;"><?php
-                                $dt = DateTime::createFromFormat('Y-m-d', $fat['period'] . '-01');
-                                echo $dt ? mb_strtoupper($dt->format('M/Y'), 'UTF-8') : $fat['period'];
+                                $dtFat = DateTime::createFromFormat('Y-m-d', $fat['period'] . '-01');
+                                if ($dtFat) {
+                                    $meses = ['JAN','FEV','MAR','ABR','MAI','JUN','JUL','AGO','SET','OUT','NOV','DEZ'];
+                                    echo $meses[(int)$dtFat->format('n') - 1] . '/' . $dtFat->format('Y');
+                                } else {
+                                    echo $fat['period'];
+                                }
                             ?></div>
-                            <div style="font-size:11px;color:var(--muted);">Venc. dia <?= $viewCard['dia_vencimento'] ?></div>
+                            <?php
+                                // Calcular data de vencimento efetiva deste mês
+                                $fatY = (int)substr($fat['period'], 0, 4);
+                                $fatM = (int)substr($fat['period'], 5, 2);
+                                $lastDayFat = (int)(new DateTime("$fatY-$fatM-01"))->format('t');
+                                $diaVencEfetivo = min((int)$viewCard['dia_vencimento'], $lastDayFat);
+                            ?>
+                            <div style="font-size:11px;color:var(--muted);">Venc. <?= sprintf('%02d/%02d/%04d', $diaVencEfetivo, $fatM, $fatY) ?></div>
                         </td>
                         <td style="text-align:center;"><span class="badge" style="background:var(--accent-light);color:var(--accent);border:1px solid rgba(0,212,255,0.2);"><?= $fatCount ?> itens</span></td>
                         <td class="item-amount" style="color:var(--danger)"><?= money($fat['total']) ?></td>
@@ -877,7 +889,7 @@ body.light .credit-card-visual:hover { box-shadow: 0 8px 32px rgba(0,0,0,0.1); }
             <?php if ($viewCompras): ?>
             <div class="detail-panel" style="overflow-x:auto;">
                 <table class="data-table">
-                    <thead><tr><th>Descrição</th><th>Valor</th><th>Data</th><th>Fatura</th><th>Status</th><th>Ações</th></tr></thead>
+                    <thead><tr><th>Descrição</th><th>Valor</th><th>Data</th><th>Fatura</th><th>Status</th><th style="text-align:center;">Ações</th></tr></thead>
                     <tbody>
                     <?php foreach ($viewCompras as $compra): ?>
                     <tr id="row-<?= (int)$compra['id'] ?>">
@@ -898,17 +910,29 @@ body.light .credit-card-visual:hover { box-shadow: 0 8px 32px rgba(0,0,0,0.1); }
                             echo $dt ? mb_strtoupper($dt->format('M/Y'), 'UTF-8') : $compra['fatura_period'];
                         ?></td>
                         <td>
-                            <form method="post" style="display:inline;">
-                                <input type="hidden" name="action_card" value="toggle_expense_paid">
-                                <input type="hidden" name="expense_id" value="<?= (int)$compra['id'] ?>">
-                                <input type="hidden" name="card_view" value="<?= $viewCard['id'] ?>">
-                                <button type="submit" title="Alternar Pago/Pendente" class="badge <?= $compra['paid'] ? 'paid' : 'unpaid' ?>" style="cursor:pointer;border:none;font-family:'Sora',sans-serif;">
-                                    <?= $compra['paid'] ? 'Pago' : 'Pendente' ?>
-                                </button>
-                            </form>
+                            <span class="badge <?= $compra['paid'] ? 'paid' : 'unpaid' ?>"><?= $compra['paid'] ? 'Pago' : 'Pendente' ?></span>
                         </td>
                         <td>
                             <div style="display:flex;gap:4px;align-items:center;">
+                                <!-- Botão Alternar Pago/Pendente -->
+                                <form method="post" style="display:inline;">
+                                    <input type="hidden" name="action_card" value="toggle_expense_paid">
+                                    <input type="hidden" name="expense_id" value="<?= (int)$compra['id'] ?>">
+                                    <input type="hidden" name="card_view" value="<?= $viewCard['id'] ?>">
+                                    <?php if ($compra['paid']): ?>
+                                    <button type="submit" title="Marcar como Pendente" style="width:28px;height:28px;border-radius:6px;border:1px solid rgba(0,212,255,0.3);background:rgba(0,212,255,0.1);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;transition:all 0.15s;color:var(--accent);">
+                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;">
+                                            <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                        </svg>
+                                    </button>
+                                    <?php else: ?>
+                                    <button type="submit" title="Marcar como Pago" style="width:28px;height:28px;border-radius:6px;border:1px solid rgba(0,255,136,0.3);background:rgba(0,255,136,0.1);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;transition:all 0.15s;color:var(--success);">
+                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;">
+                                            <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                        </svg>
+                                    </button>
+                                    <?php endif; ?>
+                                </form>
                                 <!-- Botão Editar (toggle inline) -->
                                 <button type="button" title="Editar lançamento" onclick="toggleEditRow(<?= (int)$compra['id'] ?>)" style="width:28px;height:28px;border-radius:6px;border:1px solid rgba(255,214,0,0.2);background:rgba(255,214,0,0.08);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;transition:all 0.15s;color:var(--warning);">
                                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;">
