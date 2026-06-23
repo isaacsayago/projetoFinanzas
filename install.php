@@ -174,6 +174,58 @@ if (tableExists($pdo, 'expenses') && !columnExists($pdo, 'expenses', 'shared_wit
 }
 
 // ============================================================
+// 7. TABELA: loans (Financiamentos e Empréstimos)
+// ============================================================
+if (!tableExists($pdo, 'loans')) {
+    runSQL($pdo, "
+        CREATE TABLE loans (
+            id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            user_id INT(10) UNSIGNED NOT NULL,
+            name VARCHAR(255) NOT NULL,
+            category ENUM('moto','carro','casa','emprestimo_pessoal','consignado','outros') DEFAULT 'outros',
+            total_amount DECIMAL(12,2) NOT NULL,
+            total_installments INT UNSIGNED NOT NULL,
+            installment_amount DECIMAL(12,2) NOT NULL,
+            first_due_date DATE NOT NULL,
+            last_due_date DATE NOT NULL,
+            institution VARCHAR(255) NULL,
+            interest_rate DECIMAL(5,2) NULL,
+            already_paid_installments INT UNSIGNED DEFAULT 0,
+            notes TEXT NULL,
+            active TINYINT(1) DEFAULT 1,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_loan_user (user_id),
+            FOREIGN KEY (user_id) REFERENCES usuarios(id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ", 'Criar tabela loans', $results, $errors);
+} else {
+    $results[] = 'SKIP — Tabela loans já existe';
+}
+
+// ============================================================
+// 8. TABELA: loan_installments (Parcelas de financiamentos)
+// ============================================================
+if (!tableExists($pdo, 'loan_installments')) {
+    runSQL($pdo, "
+        CREATE TABLE loan_installments (
+            id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            loan_id INT UNSIGNED NOT NULL,
+            installment_number INT UNSIGNED NOT NULL,
+            amount DECIMAL(12,2) NOT NULL,
+            due_date DATE NOT NULL,
+            period VARCHAR(7) NOT NULL,
+            paid TINYINT(1) DEFAULT 0,
+            payment_date DATE NULL,
+            INDEX idx_li_loan (loan_id),
+            INDEX idx_li_period (period),
+            FOREIGN KEY (loan_id) REFERENCES loans(id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ", 'Criar tabela loan_installments', $results, $errors);
+} else {
+    $results[] = 'SKIP — Tabela loan_installments já existe';
+}
+
+// ============================================================
 // RESULTADO
 // ============================================================
 $hasErrors = count($errors) > 0;

@@ -7,6 +7,7 @@ if (!isset($_SESSION['id'])) {
 
 require_once 'conexao_pdo.php';
 require_once 'fatura_helper.php';
+require_once 'financiamento_helper.php';
 $current_user_id = $_SESSION['id'];
 $current_user_name = $_SESSION['nome'] ?? 'Usuário';
 $is_admin = isset($_SESSION['nivel']) && $_SESSION['nivel'] === 'adm';
@@ -110,7 +111,14 @@ if ($action === 'copy_prev' && $selectedPeriod !== 'all') {
     $prevDate = clone $targetDate;
     $prevDate->modify('-1 month');
     $prevPeriod = $prevDate->format('Y-m');
-    $stmtCopy = $pdo->prepare("SELECT * FROM expenses WHERE period = :prev_period AND user_id = :user_id");
+    $stmtCopy = $pdo->prepare("
+        SELECT e.* FROM expenses e
+        LEFT JOIN expense_card_link ecl ON ecl.expense_id = e.id
+        WHERE e.period = :prev_period AND e.user_id = :user_id
+          AND ecl.expense_id IS NULL
+          AND e.name NOT LIKE 'FINANCIAMENTO%'
+          AND e.name NOT LIKE 'FAT CARTÃO%'
+    ");
     $stmtCopy->execute([':prev_period' => $prevPeriod, ':user_id' => $current_user_id]);
     $itemsToCopy = $stmtCopy->fetchAll(PDO::FETCH_ASSOC);
     if ($itemsToCopy) {
@@ -193,6 +201,66 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         header("Location: " . $redirectUrl); exit;
     }
 
+    // Alternar status de parcela de financiamento
+    if (isset($_POST['action_pay_financiamento']) || isset($_POST['action_toggle_financiamento'])) {
+        $finInstId = (int)($_POST['fin_installment_id'] ?? 0);
+        if ($finInstId) {
+            $stmtPayFin = $pdo->prepare("
+                UPDATE loan_installments li
+                JOIN loans l ON l.id = li.loan_id
+                SET li.paid = CASE WHEN li.paid = 1 THEN 0 ELSE 1 END,
+                    li.payment_date = CASE WHEN li.paid = 0 THEN CURDATE() ELSE NULL END
+                WHERE li.id = :iid AND l.user_id = :uid
+            ");
+            $stmtPayFin->execute([':iid'=>$finInstId, ':uid'=>$current_user_id]);
+        }
+        header("Location: " . $redirectUrl); exit;
+    }
+
+    // Criar novo financiamento/empréstimo
+    if (isset($_POST['action_create_loan'])) {
+        $loanName = trim($_POST['loan_name'] ?? '');
+        $loanCat = trim($_POST['loan_category'] ?? 'outros');
+        $loanTotal = str_replace(',', '.', trim($_POST['loan_total_amount'] ?? ''));
+        $loanParcelas = (int)($_POST['loan_total_installments'] ?? 0);
+        $loanValorParcela = str_replace(',', '.', trim($_POST['loan_installment_amount'] ?? ''));
+        $loanFirstDate = trim($_POST['loan_first_due_date'] ?? '');
+        $loanInstitution = trim($_POST['loan_institution'] ?? '');
+        $loanRate = trim($_POST['loan_interest_rate'] ?? '');
+        $loanAlreadyPaid = (int)($_POST['loan_already_paid'] ?? 0);
+        $loanNotes = trim($_POST['loan_notes'] ?? '');
+
+        if ($loanName && $loanTotal && is_numeric($loanTotal) && $loanParcelas > 0
+            && $loanValorParcela && is_numeric($loanValorParcela) && $loanFirstDate) {
+
+            $loanRate = ($loanRate !== '' && is_numeric(str_replace(',', '.', $loanRate)))
+                ? (float)str_replace(',', '.', $loanRate) : null;
+
+            $stmtLoan = $pdo->prepare("
+                INSERT INTO loans (user_id, name, category, total_amount, total_installments,
+                    installment_amount, first_due_date, last_due_date, institution, interest_rate,
+                    already_paid_installments, notes)
+                VALUES (:uid, :name, :cat, :total, :parcelas, :valor, :first, :first, :inst, :rate, :paid, :notes)
+            ");
+            $stmtLoan->execute([
+                ':uid' => $current_user_id,
+                ':name' => $loanName,
+                ':cat' => $loanCat,
+                ':total' => (float)$loanTotal,
+                ':parcelas' => $loanParcelas,
+                ':valor' => (float)$loanValorParcela,
+                ':first' => $loanFirstDate,
+                ':inst' => $loanInstitution ?: null,
+                ':rate' => $loanRate,
+                ':paid' => $loanAlreadyPaid,
+                ':notes' => $loanNotes ?: null,
+            ]);
+            $newLoanId = (int)$pdo->lastInsertId();
+            generateLoanInstallments($pdo, $newLoanId);
+        }
+        header("Location: " . $redirectUrl); exit;
+    }
+
     if (isset($_POST['edit_id']) && $_POST['edit_id'] !== '') {
         $id = (int)$_POST['edit_id'];
         $name = trim($_POST['name_single'] ?? '');
@@ -239,6 +307,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             // Se tem cartão, usa data de hoje como data da compra para cálculo da fatura
             // A due_date é calculada automaticamente (dia_vencimento no mês da fatura)
+            // fatura_override permite forçar um mês específico
+            $faturaOverride = isset($_POST['fatura_override'][$i]) ? trim($_POST['fatura_override'][$i]) : '';
+            $useFaturaOverride = $faturaOverride && preg_match('/^\d{4}-\d{2}$/', $faturaOverride);
+
             if ($cardId && $diaFechamento && $diaVencimento) {
                 $purchaseDate = $d ?: date('Y-m-d'); // data informada ou hoje
 
@@ -250,7 +322,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             $parcelPurchase = clone $baseDate;
                             if ($p > 1) $parcelPurchase->modify('+' . ($p - 1) . ' months');
 
-                            $faturaPeriod = calcularFaturaPeriod($parcelPurchase->format('Y-m-d'), $diaFechamento);
+                            // Para parcelas: 1ª usa override se fornecido, demais avançam mês a mês
+                            if ($useFaturaOverride && $p === 1) {
+                                $faturaPeriod = $faturaOverride;
+                            } elseif ($useFaturaOverride && $p > 1) {
+                                $overrideDt = new DateTime($faturaOverride . '-01');
+                                $overrideDt->modify('+' . ($p - 1) . ' months');
+                                $faturaPeriod = $overrideDt->format('Y-m');
+                            } else {
+                                $faturaPeriod = calcularFaturaPeriod($parcelPurchase->format('Y-m-d'), $diaFechamento);
+                            }
                             // due_date = dia_vencimento no mês da fatura
                             $fatY = (int)substr($faturaPeriod, 0, 4);
                             $fatM = (int)substr($faturaPeriod, 5, 2);
@@ -263,7 +344,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             $stmtCardLink->execute([':eid'=>$expenseId, ':cid'=>$cardId, ':fatura'=>$faturaPeriod]);
                         }
                     } else {
-                        $faturaPeriod = calcularFaturaPeriod($purchaseDate, $diaFechamento);
+                        $faturaPeriod = $useFaturaOverride ? $faturaOverride : calcularFaturaPeriod($purchaseDate, $diaFechamento);
                         $fatY = (int)substr($faturaPeriod, 0, 4);
                         $fatM = (int)substr($faturaPeriod, 5, 2);
                         $lastD = (int)(new DateTime("{$fatY}-{$fatM}-01"))->format('t');
@@ -336,9 +417,45 @@ $g->execute([':uid'=>$data_user_id,':uid2'=>$data_user_id]);
 $gv = $g->fetch(PDO::FETCH_ASSOC);
 $balanco_geral = ($gv['rec'] ?? 0) - ($gv['pag'] ?? 0);
 
-$periodsStmt = $pdo->prepare("SELECT DISTINCT DATE_FORMAT(due_date, '%Y-%m') as period FROM expenses WHERE {$whereUser} ORDER BY period DESC");
-$periodsStmt->execute([':uid'=>$data_user_id,':uid2'=>$data_user_id]);
-$periods = $periodsStmt->fetchAll(PDO::FETCH_COLUMN);
+// Incluir parcelas de financiamento nos totais de despesas
+$finDueStmt = $pdo->prepare("
+    SELECT
+        COALESCE(SUM(CASE WHEN li.paid=0 AND li.period = :period THEN li.amount ELSE 0 END), 0) as fin_now,
+        COALESCE(SUM(CASE WHEN li.paid=0 AND li.period > :period2 THEN li.amount ELSE 0 END), 0) as fin_future,
+        COALESCE(SUM(CASE WHEN li.paid=0 THEN li.amount ELSE 0 END), 0) as fin_all
+    FROM loan_installments li
+    JOIN loans l ON l.id = li.loan_id
+    WHERE l.user_id = :uid AND l.active = 1
+");
+$finPeriodRef = ($selectedPeriod !== 'all') ? $selectedPeriod : date('Y-m');
+$finDueStmt->execute([':period'=>$finPeriodRef, ':period2'=>$finPeriodRef, ':uid'=>$data_user_id]);
+$finDue = $finDueStmt->fetch(PDO::FETCH_ASSOC);
+$due_now += (float)($finDue['fin_now'] ?? 0);
+$due_future += (float)($finDue['fin_future'] ?? 0);
+$total_all += (float)($finDue['fin_all'] ?? 0);
+
+// Navegação inteligente: 3 meses atrás + atual + 9 futuros, mesclado com períodos do DB
+$dbPeriodsStmt = $pdo->prepare("SELECT DISTINCT DATE_FORMAT(due_date, '%Y-%m') as period FROM expenses WHERE {$whereUser} ORDER BY period DESC");
+$dbPeriodsStmt->execute([':uid'=>$data_user_id,':uid2'=>$data_user_id]);
+$dbPeriods = $dbPeriodsStmt->fetchAll(PDO::FETCH_COLUMN);
+
+$dbLoanPeriodsStmt = $pdo->prepare("SELECT DISTINCT li.period FROM loan_installments li JOIN loans l ON l.id = li.loan_id WHERE l.user_id = :uid AND l.active = 1 ORDER BY li.period DESC");
+$dbLoanPeriodsStmt->execute([':uid'=>$data_user_id]);
+$dbLoanPeriods = $dbLoanPeriodsStmt->fetchAll(PDO::FETCH_COLUMN);
+
+$smartPeriods = [];
+$anchorNav = new DateTime('first day of this month');
+for ($iNav = -3; $iNav <= 8; $iNav++) {
+    $dNav = clone $anchorNav;
+    $dNav->modify("{$iNav} months");
+    $smartPeriods[] = $dNav->format('Y-m');
+}
+// Incluir período selecionado mesmo que fora da janela
+if ($selectedPeriod !== 'all' && !in_array($selectedPeriod, $smartPeriods)) {
+    $smartPeriods[] = $selectedPeriod;
+}
+$periods = array_unique(array_merge($smartPeriods, array_intersect($dbPeriods, $smartPeriods), array_intersect($dbLoanPeriods, $smartPeriods)));
+usort($periods, fn($a, $b) => strcmp($b, $a));
 
 $namesStmt = $pdo->prepare("SELECT DISTINCT name FROM expenses WHERE {$whereUser} ORDER BY name ASC");
 $namesStmt->execute([':uid'=>$data_user_id,':uid2'=>$data_user_id]);
@@ -373,15 +490,19 @@ $rowsSemCartao = array_filter($rows, fn($r) => !in_array($r['id'], $cardLinkedId
 // Buscar faturas consolidadas por cartão
 $faturaRows = getFaturasConsolidadas($pdo, $data_user_id, $selectedPeriod !== 'all' ? $selectedPeriod : null);
 
-// Juntar despesas normais + faturas consolidadas
+// Buscar parcelas de financiamento para o período
+$finRows = getFinanciamentosConsolidados($pdo, $data_user_id, $selectedPeriod !== 'all' ? $selectedPeriod : null);
+
+// Juntar despesas normais + faturas consolidadas + parcelas de financiamento
 $expenseRowsBase = array_filter($rowsSemCartao, fn($r) => ($r['type'] ?? 'expense') === 'expense');
-$expenseRows = array_merge(array_values($expenseRowsBase), $faturaRows);
+$expenseRows = array_merge(array_values($expenseRowsBase), $faturaRows, $finRows);
 usort($expenseRows, fn($a, $b) => strcmp($a['due_date'], $b['due_date']));
 
 $incomeRows  = array_filter($rowsSemCartao, fn($r) => ($r['type'] ?? 'expense') === 'income');
 
 // ---- Dados de cartões de crédito ----
 $cardMetrics = getConsolidatedCardMetrics($pdo, $data_user_id);
+$loanMetrics = getLoanMetrics($pdo, $data_user_id);
 $userCardsStmt = $pdo->prepare("SELECT id, nome, dia_vencimento, dia_fechamento FROM credit_cards WHERE user_id = :uid AND ativo = 1 ORDER BY nome ASC");
 $userCardsStmt->execute([':uid' => $current_user_id]);
 $userCards = $userCardsStmt->fetchAll(PDO::FETCH_ASSOC);
@@ -1155,6 +1276,84 @@ body.light .modal-overlay { background: rgba(0,0,0,0.3); }
 .empty-state svg { width: 32px; height: 32px; opacity: 0.3; margin-bottom: 8px; }
 .empty-state p { font-size: 13px; }
 
+/* ===== MODAL TYPE TABS ===== */
+.modal-type-tabs {
+    display: flex;
+    gap: 6px;
+    margin-top: 12px;
+}
+.modal-type-tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 14px;
+    border-radius: 8px;
+    border: 1.5px solid var(--border);
+    background: var(--surface2);
+    color: var(--muted);
+    font-family: 'Sora', sans-serif;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+.modal-type-tab.active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #06080f;
+}
+.modal-type-tab:hover:not(.active) {
+    border-color: rgba(0,212,255,0.4);
+    color: var(--ink);
+}
+.modal-type-tab.active-purple {
+    background: var(--purple);
+    border-color: var(--purple);
+    color: #fff;
+}
+.modal-type-tab:hover:not(.active):not(.active-purple) {
+    border-color: rgba(0,212,255,0.4);
+    color: var(--ink);
+}
+
+/* ===== LOAN FORM ===== */
+.loan-form-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px 20px;
+}
+.loan-form-grid .span-2 { grid-column: 1 / -1; }
+.loan-form-grid label {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+    display: block;
+    margin-bottom: 4px;
+}
+.loan-form-grid input,
+.loan-form-grid select,
+.loan-form-grid textarea {
+    width: 100%;
+    padding: 9px 10px;
+    border: 1.5px solid var(--border);
+    border-radius: 8px;
+    font-family: 'Sora', sans-serif;
+    font-size: 13px;
+    color: var(--ink);
+    background: var(--surface2);
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+.loan-form-grid input:focus,
+.loan-form-grid select:focus,
+.loan-form-grid textarea:focus {
+    outline: none;
+    border-color: var(--purple);
+    box-shadow: 0 0 0 3px rgba(168,85,247,0.1);
+}
+.loan-form-grid textarea { resize: vertical; min-height: 72px; }
+
 /* ===== ADD ENTRY MODAL ===== */
 .modal-overlay {
     display: none;
@@ -1219,7 +1418,7 @@ body.light .modal-overlay { background: rgba(0,0,0,0.3); }
 
 .entry-row {
     display: grid;
-    grid-template-columns: 2fr 1fr 1fr 1fr 1fr auto auto 1fr 1fr auto;
+    grid-template-columns: 2fr 1fr 1fr 1fr 1fr auto auto 1fr 1fr 1fr auto;
     gap: 8px;
     margin-bottom: 8px;
     align-items: end;
@@ -1416,6 +1615,12 @@ body.light ::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
             </svg>
             <span>Todos</span>
         </a>
+        <div style="padding: 4px 8px 2px;">
+            <input type="month" id="periodSearch" title="Ir para um mês específico"
+                style="width:100%;padding:5px 7px;background:var(--surface2);border:1px solid var(--border);border-radius:7px;color:var(--muted);font-family:'Sora',sans-serif;font-size:11px;cursor:pointer;"
+                onchange="if(this.value){window.location='?period='+this.value;}"
+                placeholder="Buscar mês…">
+        </div>
     </div>
 
     <div class="period-nav">
@@ -1444,6 +1649,12 @@ body.light ::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
                     <path stroke-linecap="round" stroke-linejoin="round" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
                 </svg>
                 <span>Cartões</span>
+            </a>
+            <a href="financiamentos.php" class="sidebar-action">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+                </svg>
+                <span>Financiamentos</span>
             </a>
             <a href="compartilhamento.php" class="sidebar-action">
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
@@ -1626,6 +1837,16 @@ body.light ::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
         </div>
         <?php endif; ?>
 
+        <?php if ($loanMetrics['qtd_financiamentos'] > 0): ?>
+        <div style="margin-bottom:16px;">
+            <a href="financiamentos.php" style="display:inline-flex;align-items:center;gap:8px;padding:8px 14px;background:rgba(168,85,247,0.08);border:1px solid rgba(168,85,247,0.2);border-radius:10px;text-decoration:none;color:var(--purple);font-size:12px;font-weight:600;transition:all 0.15s;" onmouseover="this.style.background='rgba(168,85,247,0.15)'" onmouseout="this.style.background='rgba(168,85,247,0.08)'">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;"><path stroke-linecap="round" stroke-linejoin="round" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" /></svg>
+                🏦 <?= $loanMetrics['qtd_financiamentos'] ?> financiamento<?= $loanMetrics['qtd_financiamentos'] > 1 ? 's' : '' ?> ativo<?= $loanMetrics['qtd_financiamentos'] > 1 ? 's' : '' ?> · <?= money($loanMetrics['total_restante']) ?> restante
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" style="width:12px;height:12px;opacity:0.6;"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" /></svg>
+            </a>
+        </div>
+        <?php endif; ?>
+
         <!-- CHARTS GRID -->
         <div class="charts-grid">
             <!-- 1. Histórico mensal (barras) -->
@@ -1790,9 +2011,10 @@ body.light ::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
                     <tbody>
                         <?php foreach ($expenseRows as $r):
                             $isFatura = !empty($r['is_fatura']);
+                            $isFinanciamento = !empty($r['is_financiamento']);
                             $isShared = !empty($r['shared_with_user_id']);
-                            if ($isFatura) {
-                                $canAct = false; // Faturas consolidadas não têm ação individual
+                            if ($isFatura || $isFinanciamento) {
+                                $canAct = false;
                             } else {
                                 $canAct = ($r['user_id'] == $current_user_id || (isset($r['shared_with_user_id']) && $r['shared_with_user_id'] == $current_user_id));
                                 if ($viewing_shared && !$isShared) $canAct = false;
@@ -1800,7 +2022,7 @@ body.light ::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
                         ?>
                         <tr>
                             <td>
-                                <div class="item-name"><?php if ($isFatura): ?><a href="cartoes.php?view=<?= $r['card_id'] ?>" title="Ver detalhes do cartão" style="text-decoration:none;">💳 <?= safe($r['name']) ?></a><?php elseif ($isShared): ?><span title="Lançamento compartilhado" style="margin-right:4px;">👥</span><?= safe($r['name']) ?><?php else: ?><?= safe($r['name']) ?><?php endif; ?></div>
+                                <div class="item-name"><?php if ($isFatura): ?><a href="cartoes.php?view=<?= $r['card_id'] ?>" title="Ver detalhes do cartão" style="text-decoration:none;">💳 <?= safe($r['name']) ?></a><?php elseif ($isFinanciamento): ?><a href="financiamentos.php?view=<?= $r['loan_id'] ?>" title="Ver financiamento" style="text-decoration:none;"><span style="font-size:10px;font-weight:700;color:var(--purple);letter-spacing:0.04em;">🏦 FINAN.</span><br><span style="font-size:12px;"><?= safe(substr($r['name'], 14)) ?> (<?= $r['installment_number'] ?>/<?= $r['total_installments'] ?>)</span></a><?php elseif ($isShared): ?><span title="Lançamento compartilhado" style="margin-right:4px;">👥</span><?= safe($r['name']) ?><?php else: ?><?= safe($r['name']) ?><?php endif; ?></div>
                                 <?php if (!empty($r['planned'])): ?>
                                 <span class="badge planned" style="margin-top:2px;font-size:10px;">Planificado</span>
                                 <?php endif; ?>
@@ -1849,6 +2071,25 @@ body.light ::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
                                     </form>
                                     <?php endif; ?>
                                     <a href="cartoes.php?view=<?= (int)$r['card_id'] ?>" class="btn-icon edit" title="Ver detalhes do cartão" style="width:auto;padding:4px 10px;border-radius:6px;font-size:11px;font-weight:500;font-family:'Sora',sans-serif;text-decoration:none;gap:4px;white-space:nowrap;">
+                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" style="width:12px;height:12px;">
+                                            <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                                        </svg>
+                                        Ver
+                                    </a>
+                                </div>
+                                <?php elseif ($isFinanciamento): ?>
+                                <div class="action-btns" style="flex-wrap:wrap;justify-content:flex-end;">
+                                    <form method="post" style="display:inline;">
+                                        <input type="hidden" name="action_toggle_financiamento" value="1">
+                                        <input type="hidden" name="fin_installment_id" value="<?= (int)$r['installment_id'] ?>">
+                                        <button type="submit" class="btn-icon toggle" title="<?= $r['paid'] ? 'Desmarcar pagamento' : 'Marcar como pago' ?>" style="width:auto;padding:4px 10px;border-radius:6px;font-size:11px;font-weight:600;font-family:'Sora',sans-serif;gap:4px;white-space:nowrap;">
+                                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5" style="width:12px;height:12px;">
+                                                <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+                                            </svg>
+                                            <?= $r['paid'] ? 'Desmarcar' : 'Pagar' ?>
+                                        </button>
+                                    </form>
+                                    <a href="financiamentos.php?view=<?= (int)$r['loan_id'] ?>" class="btn-icon edit" title="Ver financiamento" style="width:auto;padding:4px 10px;border-radius:6px;font-size:11px;font-weight:500;font-family:'Sora',sans-serif;text-decoration:none;gap:4px;white-space:nowrap;">
                                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" style="width:12px;height:12px;">
                                             <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
                                         </svg>
@@ -1963,99 +2204,188 @@ body.light ::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
 <div class="modal-overlay" id="addModal" onclick="if(event.target===this)this.classList.remove('open')">
     <div class="modal">
         <div class="modal-header">
-            <div class="modal-title">Novo lançamento</div>
+            <div>
+                <div class="modal-title">Novo lançamento</div>
+                <div class="modal-type-tabs">
+                    <button class="modal-type-tab active" data-type="lancamento" onclick="switchModalType('lancamento')">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;"><path stroke-linecap="round" stroke-linejoin="round" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                        Despesa / Receita
+                    </button>
+                    <button class="modal-type-tab" data-type="financiamento" onclick="switchModalType('financiamento')">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;"><path stroke-linecap="round" stroke-linejoin="round" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" /></svg>
+                        Empréstimo / Financiamento
+                    </button>
+                </div>
+            </div>
             <button class="modal-close" onclick="document.getElementById('addModal').classList.remove('open')">×</button>
         </div>
         <div class="modal-body">
-            <form method="post" id="addForm">
-                <datalist id="user-expense-names">
-                    <?php foreach ($suggestionNames as $n): ?><option value="<?= safe($n) ?>"><?php endforeach; ?>
-                </datalist>
-                <div id="entryRows">
-                    <div class="entry-row">
-                        <div>
-                            <label>Nome / Descrição</label>
-                            <input name="name[]" type="text" placeholder="Ex: Aluguel" list="user-expense-names" autocomplete="off" required>
-                        </div>
-                        <div>
-                            <label>Valor</label>
-                            <input name="amount[]" type="text" inputmode="decimal" placeholder="0,00" required>
-                        </div>
-                        <div class="date-field">
-                            <label>Vencimento</label>
-                            <input name="date[]" type="date" value="<?= $today_iso ?>" required>
-                        </div>
-                        <div>
-                            <label>Tipo</label>
-                            <select name="type[]">
-                                <option value="expense">Despesa</option>
-                                <option value="income">Receita</option>
-                            </select>
-                        </div>
-                        <div>
-                            <label>Planificado</label>
-                            <select name="planned[]">
-                                <option value="1">Sim</option>
-                                <option value="0">Não</option>
-                            </select>
-                        </div>
-                        <div>
-                            <label>Parcelado</label>
-                            <select name="parcelado[]" onchange="toggleParcelas(this)">
-                                <option value="0">Não</option>
-                                <option value="1">Sim</option>
-                            </select>
-                        </div>
-                        <div class="parcelas-field" style="display:none;">
-                            <label>Parcelas</label>
-                            <input name="parcelas[]" type="number" min="2" max="99" value="2" style="width:70px;">
-                        </div>
-                        <?php if ($userCards): ?>
-                        <div>
-                            <label>Cartão</label>
-                            <select name="card_id[]" onchange="toggleCardDate(this)">
-                                <option value="" data-venc="" data-fech="">Nenhum</option>
-                                <?php foreach ($userCards as $uc): ?>
-                                <option value="<?= $uc['id'] ?>" data-venc="<?= $uc['dia_vencimento'] ?>" data-fech="<?= $uc['dia_fechamento'] ?>"><?= safe($uc['nome']) ?></option>
-                                <?php endforeach; ?>
-                            </select>
-                        </div>
-                        <?php else: ?>
-                        <input type="hidden" name="card_id[]" value="">
-                        <?php endif; ?>
-                        <?php if (!empty($sharePartners)): ?>
-                        <div>
-                            <label>Compartilhar com</label>
-                            <select name="shared_with[]">
-                                <option value="">Nenhum</option>
-                                <?php foreach ($sharePartners as $spId => $spName): ?>
-                                <option value="<?= (int)$spId ?>"><?= safe($spName) ?></option>
-                                <?php endforeach; ?>
-                            </select>
-                        </div>
-                        <?php else: ?>
-                        <input type="hidden" name="shared_with[]" value="">
-                        <?php endif; ?>
-                        <div style="padding-bottom:1px;">
-                            <label style="visibility:hidden">x</label>
-                            <button type="button" class="btn-icon del" onclick="removeEntryRow(this)" style="width:36px;height:36px;">
-                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                                    <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
-                                </svg>
-                            </button>
+
+            <!-- SEÇÃO: Lançamento normal (despesa/receita) -->
+            <div id="sectionLancamento">
+                <form method="post" id="addForm">
+                    <datalist id="user-expense-names">
+                        <?php foreach ($suggestionNames as $n): ?><option value="<?= safe($n) ?>"><?php endforeach; ?>
+                    </datalist>
+                    <div id="entryRows">
+                        <div class="entry-row">
+                            <div>
+                                <label>Nome / Descrição</label>
+                                <input name="name[]" type="text" placeholder="Ex: Aluguel" list="user-expense-names" autocomplete="off" required>
+                            </div>
+                            <div>
+                                <label>Valor</label>
+                                <input name="amount[]" type="text" inputmode="decimal" placeholder="0,00" required>
+                            </div>
+                            <div class="date-field">
+                                <label>Vencimento</label>
+                                <input name="date[]" type="date" value="<?= $today_iso ?>" required>
+                            </div>
+                            <div>
+                                <label>Tipo</label>
+                                <select name="type[]">
+                                    <option value="expense">Despesa</option>
+                                    <option value="income">Receita</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label>Planificado</label>
+                                <select name="planned[]">
+                                    <option value="1">Sim</option>
+                                    <option value="0">Não</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label>Parcelado</label>
+                                <select name="parcelado[]" onchange="toggleParcelas(this)">
+                                    <option value="0">Não</option>
+                                    <option value="1">Sim</option>
+                                </select>
+                            </div>
+                            <div class="parcelas-field" style="display:none;">
+                                <label>Parcelas</label>
+                                <input name="parcelas[]" type="number" min="2" max="99" value="2" style="width:70px;">
+                            </div>
+                            <?php if ($userCards): ?>
+                            <div>
+                                <label>Cartão</label>
+                                <select name="card_id[]" onchange="toggleCardDate(this)">
+                                    <option value="" data-venc="" data-fech="">Nenhum</option>
+                                    <?php foreach ($userCards as $uc): ?>
+                                    <option value="<?= $uc['id'] ?>" data-venc="<?= $uc['dia_vencimento'] ?>" data-fech="<?= $uc['dia_fechamento'] ?>"><?= safe($uc['nome']) ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+                            <div class="fatura-field" style="display:none;">
+                                <label>Mês da Fatura</label>
+                                <input name="fatura_override[]" type="month" title="Deixe o mês calculado ou escolha outro para antecipar/adiar a fatura">
+                            </div>
+                            <?php else: ?>
+                            <input type="hidden" name="card_id[]" value="">
+                            <input type="hidden" name="fatura_override[]" value="">
+                            <?php endif; ?>
+                            <?php if (!empty($sharePartners)): ?>
+                            <div>
+                                <label>Compartilhar com</label>
+                                <select name="shared_with[]">
+                                    <option value="">Nenhum</option>
+                                    <?php foreach ($sharePartners as $spId => $spName): ?>
+                                    <option value="<?= (int)$spId ?>"><?= safe($spName) ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+                            <?php else: ?>
+                            <input type="hidden" name="shared_with[]" value="">
+                            <?php endif; ?>
+                            <div style="padding-bottom:1px;">
+                                <label style="visibility:hidden">x</label>
+                                <button type="button" class="btn-icon del" onclick="removeEntryRow(this)" style="width:36px;height:36px;">
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                                    </svg>
+                                </button>
+                            </div>
                         </div>
                     </div>
-                </div>
-            </form>
+                </form>
+            </div>
+
+            <!-- SEÇÃO: Financiamento/Empréstimo -->
+            <div id="sectionFinanciamento" style="display:none;">
+                <form method="post" id="loanForm">
+                    <input type="hidden" name="action_create_loan" value="1">
+                    <div class="loan-form-grid">
+                        <div class="span-2">
+                            <label>Nome do Financiamento / Empréstimo *</label>
+                            <input name="loan_name" type="text" placeholder="Ex: Moto Honda CG 160, Empréstimo Pessoal Caixa…" required>
+                        </div>
+                        <div>
+                            <label>Categoria *</label>
+                            <select name="loan_category">
+                                <option value="moto">Moto</option>
+                                <option value="carro">Carro</option>
+                                <option value="casa">Casa / Imóvel</option>
+                                <option value="emprestimo_pessoal">Empréstimo Pessoal</option>
+                                <option value="consignado">Consignado</option>
+                                <option value="outros">Outros</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label>Instituição Financeira</label>
+                            <input name="loan_institution" type="text" placeholder="Ex: Banco do Brasil, Caixa, Nubank…">
+                        </div>
+                        <div>
+                            <label>Valor Total Financiado (R$) *</label>
+                            <input name="loan_total_amount" type="text" inputmode="decimal" placeholder="0,00" required>
+                        </div>
+                        <div>
+                            <label>Valor da Parcela (R$) *</label>
+                            <input name="loan_installment_amount" type="text" inputmode="decimal" placeholder="0,00" required>
+                        </div>
+                        <div>
+                            <label>Total de Parcelas *</label>
+                            <input name="loan_total_installments" type="number" min="1" max="600" placeholder="Ex: 36" required>
+                        </div>
+                        <div>
+                            <label>Parcelas Já Pagas</label>
+                            <input name="loan_already_paid" type="number" min="0" max="599" value="0" placeholder="0">
+                        </div>
+                        <div>
+                            <label>Data da 1ª Parcela *</label>
+                            <input name="loan_first_due_date" type="date" required>
+                        </div>
+                        <div>
+                            <label>Taxa de Juros (% a.m.) — opcional</label>
+                            <input name="loan_interest_rate" type="text" inputmode="decimal" placeholder="Ex: 1,5">
+                        </div>
+                        <div class="span-2">
+                            <label>Observações</label>
+                            <textarea name="loan_notes" placeholder="Informações adicionais sobre o contrato…"></textarea>
+                        </div>
+                    </div>
+                </form>
+            </div>
+
         </div>
         <div class="modal-footer">
-            <button type="button" class="btn-add-row" onclick="addEntryRow()">
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" />
-                </svg>
-                Adicionar linha
-            </button>
-            <button type="submit" form="addForm" class="btn-save">Salvar lançamentos</button>
+            <div id="footerLancamento" style="display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;">
+                <button type="button" class="btn-add-row" onclick="addEntryRow()">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" />
+                    </svg>
+                    Adicionar linha
+                </button>
+                <button type="submit" form="addForm" class="btn-save">Salvar lançamentos</button>
+            </div>
+            <div id="footerFinanciamento" style="display:none;align-items:center;justify-content:space-between;gap:10px;width:100%;">
+                <span style="font-size:12px;color:var(--muted);">As parcelas serão geradas automaticamente</span>
+                <button type="submit" form="loanForm" class="btn-save" style="background:var(--purple);">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" />
+                    </svg>
+                    Cadastrar Financiamento
+                </button>
+            </div>
         </div>
     </div>
 </div>
@@ -2443,23 +2773,78 @@ buildCharts();
 document.getElementById('passwordModal').classList.add('open');
 <?php endif; ?>
 
+// Alternar entre seções do modal (lançamento normal vs financiamento)
+function switchModalType(type) {
+    const isLoan = type === 'financiamento';
+    document.getElementById('sectionLancamento').style.display = isLoan ? 'none' : '';
+    document.getElementById('sectionFinanciamento').style.display = isLoan ? '' : 'none';
+    document.getElementById('footerLancamento').style.display = isLoan ? 'none' : 'flex';
+    document.getElementById('footerFinanciamento').style.display = isLoan ? 'flex' : 'none';
+    document.querySelectorAll('.modal-type-tab').forEach(t => {
+        t.classList.toggle('active', t.dataset.type === type);
+        if (t.dataset.type === 'financiamento') {
+            t.style.background = isLoan ? 'var(--purple)' : '';
+            t.style.borderColor = isLoan ? 'var(--purple)' : '';
+            t.style.color = isLoan ? '#fff' : '';
+        }
+    });
+}
+
+// Calcula mês da fatura dado data da compra e dia de fechamento
+function calcFaturaPeriodJS(dateStr, diaFechamento) {
+    const d = dateStr ? new Date(dateStr + 'T12:00:00') : new Date();
+    const day = d.getDate();
+    if (day >= diaFechamento) {
+        d.setDate(1);
+        d.setMonth(d.getMonth() + 1);
+    }
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    return y + '-' + m;
+}
+
 // Quando seleciona um cartão, esconde o campo de vencimento (a data é automática)
 function toggleCardDate(sel) {
     const row = sel.closest('.entry-row');
     const dateField = row.querySelector('.date-field');
     const dateInput = dateField.querySelector('input[name="date[]"]');
     const dateLabel = dateField.querySelector('label');
+    const faturaField = row.querySelector('.fatura-field');
+    const faturaInput = faturaField ? faturaField.querySelector('input') : null;
+
     if (sel.value) {
         const opt = sel.options[sel.selectedIndex];
+        const diaFech = parseInt(opt.dataset.fech) || 1;
+        const diaVenc = opt.dataset.venc;
         dateLabel.textContent = 'Data da compra';
         dateInput.removeAttribute('required');
-        dateField.style.opacity = '0.5';
-        dateField.title = 'Vencimento automático (dia ' + opt.dataset.venc + ' da fatura)';
+        dateField.style.opacity = '0.6';
+        dateField.title = 'Vencimento automático (dia ' + diaVenc + ' da fatura)';
+        // Mostrar e pré-calcular mês da fatura
+        if (faturaField) {
+            faturaField.style.display = '';
+            if (faturaInput) {
+                faturaInput.value = calcFaturaPeriodJS(dateInput.value || null, diaFech);
+                // Recalcular ao mudar a data da compra
+                dateInput.onchange = function() {
+                    const currentSel = row.querySelector('select[name="card_id[]"]');
+                    if (currentSel && currentSel.value) {
+                        const o = currentSel.options[currentSel.selectedIndex];
+                        faturaInput.value = calcFaturaPeriodJS(this.value, parseInt(o.dataset.fech) || 1);
+                    }
+                };
+            }
+        }
     } else {
         dateLabel.textContent = 'Vencimento';
         dateInput.setAttribute('required', '');
         dateField.style.opacity = '1';
         dateField.title = '';
+        dateInput.onchange = null;
+        if (faturaField) {
+            faturaField.style.display = 'none';
+            if (faturaInput) faturaInput.value = '';
+        }
     }
 }
 
@@ -2481,9 +2866,12 @@ function addEntryRow() {
     newRow.querySelectorAll('select').forEach(s => s.selectedIndex = 0);
     const parcelasField = newRow.querySelector('.parcelas-field');
     if (parcelasField) { parcelasField.style.display = 'none'; parcelasField.querySelector('input').value = '2'; }
-    // Reset date field state (in case previous row had card selected)
+    // Reset date field state
     const dateField = newRow.querySelector('.date-field');
     if (dateField) { dateField.style.opacity = '1'; dateField.title = ''; dateField.querySelector('label').textContent = 'Vencimento'; dateField.querySelector('input').setAttribute('required', ''); }
+    // Reset fatura field
+    const faturaField = newRow.querySelector('.fatura-field');
+    if (faturaField) { faturaField.style.display = 'none'; faturaField.querySelector('input').value = ''; }
     container.appendChild(newRow);
     newRow.querySelector('input[type="text"]').focus();
 }
@@ -2503,6 +2891,13 @@ document.getElementById('addForm').addEventListener('submit', function(e) {
         alert('Preencha ao menos uma linha.');
     }
 });
+
+// Abrir modal de financiamento se redirecionado de financiamentos.php
+if (sessionStorage.getItem('openLoanModal') === '1') {
+    sessionStorage.removeItem('openLoanModal');
+    document.getElementById('addModal').classList.add('open');
+    switchModalType('financiamento');
+}
 
 // Keyboard shortcut: N = new entry
 document.addEventListener('keydown', e => {
