@@ -1372,8 +1372,8 @@ body.light .modal-overlay { background: rgba(0,0,0,0.3); }
 .modal {
     background: var(--surface);
     border-radius: 16px;
-    width: 100%;
-    max-width: 900px;
+    width: calc(100vw - 40px);
+    max-width: 1400px;
     max-height: 90vh;
     overflow-y: auto;
     box-shadow: 0 24px 64px rgba(0,0,0,0.4), 0 0 40px rgba(0,212,255,0.05);

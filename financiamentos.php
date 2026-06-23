@@ -19,9 +19,31 @@ function formataDataBr($d) {
 }
 
 $msg = ''; $msg_type = '';
+$senha_msg = ''; $senha_msg_type = '';
 
 // ---- AÇÕES POST ----
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+
+    // Alterar senha
+    if (isset($_POST['action_change_password'])) {
+        $senha_atual = $_POST['senha_atual'] ?? '';
+        $nova_senha  = $_POST['nova_senha']  ?? '';
+        $confirma    = $_POST['confirma_senha'] ?? '';
+        $stmt = $pdo->prepare("SELECT senha FROM usuarios WHERE id = :id");
+        $stmt->execute([':id' => $current_user_id]);
+        $user = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!$user || !password_verify($senha_atual, $user['senha'])) {
+            $senha_msg = 'Senha atual incorreta.'; $senha_msg_type = 'error';
+        } elseif (strlen($nova_senha) < 6) {
+            $senha_msg = 'Nova senha deve ter ao menos 6 caracteres.'; $senha_msg_type = 'error';
+        } elseif ($nova_senha !== $confirma) {
+            $senha_msg = 'A confirmação não coincide.'; $senha_msg_type = 'error';
+        } else {
+            $pdo->prepare("UPDATE usuarios SET senha = :s WHERE id = :id")
+                ->execute([':s' => password_hash($nova_senha, PASSWORD_DEFAULT), ':id' => $current_user_id]);
+            $senha_msg = 'Senha alterada com sucesso!'; $senha_msg_type = 'success';
+        }
+    }
 
     // Alternar parcela paga/não paga
     if (isset($_POST['action_toggle_installment'])) {
@@ -337,12 +359,6 @@ tr:hover td { background: rgba(255,255,255,0.02); }
             </div>
         </div>
         <div class="sidebar-actions">
-            <a href="dashboard.php" class="sidebar-action">
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
-                </svg>
-                <span>Dashboard</span>
-            </a>
             <a href="cartoes.php" class="sidebar-action">
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
@@ -355,6 +371,26 @@ tr:hover td { background: rgba(255,255,255,0.02); }
                 </svg>
                 <span>Financiamentos</span>
             </a>
+            <a href="compartilhamento.php" class="sidebar-action">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+                <span>Compartilhamento</span>
+            </a>
+            <a href="#" class="sidebar-action" onclick="document.getElementById('passwordModal').classList.add('open'); return false;">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+                </svg>
+                <span>Minha conta</span>
+            </a>
+            <?php if ($is_admin): ?>
+            <a href="usuarios.php" class="sidebar-action">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
+                </svg>
+                <span>Usuários</span>
+            </a>
+            <?php endif; ?>
             <form method="post" action="logout.php" style="width:100%">
                 <button type="submit" class="sidebar-action">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
@@ -711,10 +747,48 @@ tr:hover td { background: rgba(255,255,255,0.02); }
 </div>
 </main>
 
+<!-- MODAL ALTERAR SENHA -->
+<div class="modal-overlay" id="passwordModal" onclick="if(event.target===this)this.classList.remove('open')">
+    <div class="modal" style="max-width:420px;">
+        <div class="modal-header">
+            <span class="modal-title">Alterar minha senha</span>
+            <button class="modal-close" onclick="document.getElementById('passwordModal').classList.remove('open')">&times;</button>
+        </div>
+        <form method="post">
+            <input type="hidden" name="action_change_password" value="1">
+            <div class="modal-body">
+                <?php if ($senha_msg): ?>
+                <div style="padding:10px 14px;border-radius:10px;font-size:13px;margin-bottom:16px;
+                    background:<?= $senha_msg_type === 'success' ? 'rgba(0,255,136,0.1)' : 'rgba(255,45,85,0.1)' ?>;
+                    color:<?= $senha_msg_type === 'success' ? 'var(--success)' : 'var(--danger)' ?>;
+                    border:1px solid <?= $senha_msg_type === 'success' ? 'rgba(0,255,136,0.25)' : 'rgba(255,45,85,0.25)' ?>;">
+                    <?= htmlspecialchars($senha_msg) ?>
+                </div>
+                <?php endif; ?>
+                <div style="margin-bottom:14px;">
+                    <label style="display:block;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;color:var(--muted);margin-bottom:4px;">Senha atual</label>
+                    <input type="password" name="senha_atual" required style="width:100%;padding:9px 10px;border:1.5px solid var(--border);border-radius:8px;font-family:'Sora',sans-serif;font-size:13px;color:var(--ink);background:var(--surface2);">
+                </div>
+                <div style="margin-bottom:14px;">
+                    <label style="display:block;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;color:var(--muted);margin-bottom:4px;">Nova senha</label>
+                    <input type="password" name="nova_senha" required minlength="6" style="width:100%;padding:9px 10px;border:1.5px solid var(--border);border-radius:8px;font-family:'Sora',sans-serif;font-size:13px;color:var(--ink);background:var(--surface2);">
+                </div>
+                <div style="margin-bottom:6px;">
+                    <label style="display:block;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;color:var(--muted);margin-bottom:4px;">Confirmar nova senha</label>
+                    <input type="password" name="confirma_senha" required minlength="6" style="width:100%;padding:9px 10px;border:1.5px solid var(--border);border-radius:8px;font-family:'Sora',sans-serif;font-size:13px;color:var(--ink);background:var(--surface2);">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('passwordModal').classList.remove('open')">Cancelar</button>
+                <button type="submit" class="btn btn-primary">Alterar senha</button>
+            </div>
+        </form>
+    </div>
+</div>
+
 <script>
-// Abrir modal de edição se mensagem e veio de edit
-<?php if ($msg && $viewId && $msg_type === 'success' && isset($_POST['action_edit_loan'])): ?>
-// nothing — modal closed after save
+<?php if ($senha_msg): ?>
+document.getElementById('passwordModal').classList.add('open');
 <?php endif; ?>
 </script>
 </body>
