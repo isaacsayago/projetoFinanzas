@@ -437,6 +437,9 @@ $g = $pdo->prepare("SELECT SUM(CASE WHEN type='income' AND paid=1 THEN amount EL
 $g->execute([':uid'=>$data_user_id,':uid2'=>$data_user_id]);
 $gv = $g->fetch(PDO::FETCH_ASSOC);
 $balanco_geral = ($gv['rec'] ?? 0) - ($gv['pag'] ?? 0);
+$finGStmt = $pdo->prepare("SELECT COALESCE(SUM(li.amount),0) as paid_fin FROM loan_installments li JOIN loans l ON l.id=li.loan_id WHERE l.user_id=:uid AND li.paid=1");
+$finGStmt->execute([':uid'=>$data_user_id]);
+$balanco_geral -= (float)($finGStmt->fetch(PDO::FETCH_ASSOC)['paid_fin'] ?? 0);
 
 // Parcelas de financiamento: acrescentar às métricas dos cards
 $finPeriodRef = ($selectedPeriod !== 'all') ? $selectedPeriod : date('Y-m');
@@ -444,12 +447,13 @@ $finDueStmt = $pdo->prepare("
     SELECT
         COALESCE(SUM(CASE WHEN li.paid=0 AND li.period = :period THEN li.amount ELSE 0 END), 0) as fin_now,
         COALESCE(SUM(CASE WHEN li.paid=0 AND li.period = :period_next THEN li.amount ELSE 0 END), 0) as fin_next,
-        COALESCE(SUM(CASE WHEN li.paid=0 AND li.period > :period2 THEN li.amount ELSE 0 END), 0) as fin_long
+        COALESCE(SUM(CASE WHEN li.paid=0 AND li.period > :period2 THEN li.amount ELSE 0 END), 0) as fin_long,
+        COALESCE(SUM(CASE WHEN li.period = :period3 THEN li.amount ELSE 0 END), 0) as fin_period_total
     FROM loan_installments li
     JOIN loans l ON l.id = li.loan_id
     WHERE l.user_id = :uid AND l.active = 1
 ");
-$finDueStmt->execute([':period'=>$finPeriodRef, ':period_next'=>$nextPeriod, ':period2'=>$finPeriodRef, ':uid'=>$data_user_id]);
+$finDueStmt->execute([':period'=>$finPeriodRef, ':period_next'=>$nextPeriod, ':period2'=>$finPeriodRef, ':period3'=>$finPeriodRef, ':uid'=>$data_user_id]);
 $finDue = $finDueStmt->fetch(PDO::FETCH_ASSOC);
 $total_mes = $due_now + (float)($finDue['fin_now'] ?? 0);
 $due_next  += (float)($finDue['fin_next'] ?? 0);
@@ -489,7 +493,7 @@ if ($selectedPeriod !== 'all') {
     $sumStmt = $pdo->prepare("SELECT SUM(CASE WHEN type='expense' THEN amount ELSE 0 END) AS te, SUM(CASE WHEN type='income' THEN amount ELSE 0 END) AS ti FROM expenses WHERE period=:period AND {$whereUser}");
     $sumStmt->execute([':period'=>$selectedPeriod,':uid'=>$data_user_id,':uid2'=>$data_user_id]);
     $sv = $sumStmt->fetch(PDO::FETCH_ASSOC);
-    $saldo_mes = ($sv['ti'] ?? 0) - ($sv['te'] ?? 0);
+    $saldo_mes = ($sv['ti'] ?? 0) - ($sv['te'] ?? 0) - (float)($finDue['fin_period_total'] ?? 0);
     $total_expense_month = $sv['te'] ?? 0;
     $total_income_month = $sv['ti'] ?? 0;
 } else {
