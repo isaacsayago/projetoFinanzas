@@ -391,25 +391,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 $whereUser = "(user_id=:uid OR shared_with_user_id=:uid2)";
 
 if ($selectedPeriod !== 'all') {
-    $p = $pdo->prepare("SELECT SUM(CASE WHEN type='expense' AND paid=0 THEN amount ELSE 0 END) AS unpaid_expense, SUM(CASE WHEN type='income' AND paid=0 THEN amount ELSE 0 END) AS unpaid_income FROM expenses WHERE period=:period AND {$whereUser}");
+    $p = $pdo->prepare("SELECT SUM(CASE WHEN type='expense' AND paid=0 THEN amount ELSE 0 END) AS unpaid_expense FROM expenses WHERE period=:period AND {$whereUser}");
     $p->execute([':period'=>$selectedPeriod,':uid'=>$data_user_id,':uid2'=>$data_user_id]);
-    $pt = $p->fetch(PDO::FETCH_ASSOC);
-    $due_now = $pt['unpaid_expense'] ?? 0;
+    $due_now = $p->fetch(PDO::FETCH_ASSOC)['unpaid_expense'] ?? 0;
+
+    $nextPeriodDt = new DateTime($selectedPeriod . '-01');
+    $nextPeriodDt->modify('+1 month');
+    $nextPeriod = $nextPeriodDt->format('Y-m');
+
+    $fn = $pdo->prepare("SELECT SUM(amount) as v FROM expenses WHERE paid=0 AND type='expense' AND period=:period AND {$whereUser}");
+    $fn->execute([':period'=>$nextPeriod,':uid'=>$data_user_id,':uid2'=>$data_user_id]);
+    $due_next = $fn->fetch(PDO::FETCH_ASSOC)['v'] ?? 0;
 
     $f = $pdo->prepare("SELECT SUM(amount) as v FROM expenses WHERE paid=0 AND type='expense' AND period>:period AND {$whereUser}");
     $f->execute([':period'=>$selectedPeriod,':uid'=>$data_user_id,':uid2'=>$data_user_id]);
-    $due_future = $f->fetch(PDO::FETCH_ASSOC)['v'] ?? 0;
-
-    $t = $pdo->prepare("SELECT SUM(amount) as v FROM expenses WHERE paid=0 AND type='expense' AND {$whereUser}");
-    $t->execute([':uid'=>$data_user_id,':uid2'=>$data_user_id]);
-    $total_all = $t->fetch(PDO::FETCH_ASSOC)['v'] ?? 0;
+    $due_long = $f->fetch(PDO::FETCH_ASSOC)['v'] ?? 0;
 } else {
-    $tot = $pdo->prepare("SELECT SUM(CASE WHEN due_date<=:today AND paid=0 AND type='expense' THEN amount ELSE 0 END) AS due_now, SUM(CASE WHEN due_date>:today AND paid=0 AND type='expense' THEN amount ELSE 0 END) AS due_future, SUM(CASE WHEN paid=0 AND type='expense' THEN amount ELSE 0 END) AS total_all FROM expenses WHERE {$whereUser}");
-    $tot->execute([':today'=>$today_iso,':uid'=>$data_user_id,':uid2'=>$data_user_id]);
+    $nextPeriod = date('Y-m', strtotime('first day of next month'));
+    $tot = $pdo->prepare("SELECT
+        SUM(CASE WHEN due_date<=:today AND paid=0 AND type='expense' THEN amount ELSE 0 END) AS due_now,
+        SUM(CASE WHEN DATE_FORMAT(due_date,'%Y-%m')=:nxt AND paid=0 AND type='expense' THEN amount ELSE 0 END) AS due_next,
+        SUM(CASE WHEN due_date>:today2 AND paid=0 AND type='expense' THEN amount ELSE 0 END) AS due_long
+        FROM expenses WHERE {$whereUser}");
+    $tot->execute([':today'=>$today_iso,':nxt'=>$nextPeriod,':today2'=>$today_iso,':uid'=>$data_user_id,':uid2'=>$data_user_id]);
     $tv = $tot->fetch(PDO::FETCH_ASSOC);
     $due_now = $tv['due_now'] ?? 0;
-    $due_future = $tv['due_future'] ?? 0;
-    $total_all = $tv['total_all'] ?? 0;
+    $due_next = $tv['due_next'] ?? 0;
+    $due_long = $tv['due_long'] ?? 0;
 }
 
 $g = $pdo->prepare("SELECT SUM(CASE WHEN type='income' AND paid=1 THEN amount ELSE 0 END) as rec, SUM(CASE WHEN type='expense' AND paid=1 THEN amount ELSE 0 END) as pag FROM expenses WHERE {$whereUser}");
@@ -417,22 +425,22 @@ $g->execute([':uid'=>$data_user_id,':uid2'=>$data_user_id]);
 $gv = $g->fetch(PDO::FETCH_ASSOC);
 $balanco_geral = ($gv['rec'] ?? 0) - ($gv['pag'] ?? 0);
 
-// Incluir parcelas de financiamento nos totais de despesas
+// Parcelas de financiamento: acrescentar às métricas dos cards
+$finPeriodRef = ($selectedPeriod !== 'all') ? $selectedPeriod : date('Y-m');
 $finDueStmt = $pdo->prepare("
     SELECT
         COALESCE(SUM(CASE WHEN li.paid=0 AND li.period = :period THEN li.amount ELSE 0 END), 0) as fin_now,
-        COALESCE(SUM(CASE WHEN li.paid=0 AND li.period > :period2 THEN li.amount ELSE 0 END), 0) as fin_future,
-        COALESCE(SUM(CASE WHEN li.paid=0 THEN li.amount ELSE 0 END), 0) as fin_all
+        COALESCE(SUM(CASE WHEN li.paid=0 AND li.period = :period_next THEN li.amount ELSE 0 END), 0) as fin_next,
+        COALESCE(SUM(CASE WHEN li.paid=0 AND li.period > :period2 THEN li.amount ELSE 0 END), 0) as fin_long
     FROM loan_installments li
     JOIN loans l ON l.id = li.loan_id
     WHERE l.user_id = :uid AND l.active = 1
 ");
-$finPeriodRef = ($selectedPeriod !== 'all') ? $selectedPeriod : date('Y-m');
-$finDueStmt->execute([':period'=>$finPeriodRef, ':period2'=>$finPeriodRef, ':uid'=>$data_user_id]);
+$finDueStmt->execute([':period'=>$finPeriodRef, ':period_next'=>$nextPeriod, ':period2'=>$finPeriodRef, ':uid'=>$data_user_id]);
 $finDue = $finDueStmt->fetch(PDO::FETCH_ASSOC);
-$due_now += (float)($finDue['fin_now'] ?? 0);
-$due_future += (float)($finDue['fin_future'] ?? 0);
-$total_all += (float)($finDue['fin_all'] ?? 0);
+$total_mes = $due_now + (float)($finDue['fin_now'] ?? 0);
+$due_next  += (float)($finDue['fin_next'] ?? 0);
+$due_long  += (float)($finDue['fin_long'] ?? 0);
 
 // Navegação inteligente: 3 meses atrás + atual + 9 futuros, mesclado com períodos do DB
 $dbPeriodsStmt = $pdo->prepare("SELECT DISTINCT DATE_FORMAT(due_date, '%Y-%m') as period FROM expenses WHERE {$whereUser} ORDER BY period DESC");
@@ -835,7 +843,7 @@ body::after {
 /* ===== STAT CARDS ===== */
 .stat-grid {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(5, 1fr);
     gap: 16px;
     margin-bottom: 24px;
 }
@@ -1765,8 +1773,18 @@ body.light ::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
             </div>
 
             <div class="stat-card warning">
-                <div class="stat-label">Dívidas futuras</div>
-                <div class="stat-value"><?= money($due_future) ?></div>
+                <div class="stat-label"><?= $selectedPeriod !== 'all' ? 'Dívidas próx. mês' : 'Próximo mês' ?></div>
+                <div class="stat-value"><?= money($due_next) ?></div>
+                <div class="stat-icon">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                    </svg>
+                </div>
+            </div>
+
+            <div class="stat-card purple">
+                <div class="stat-label">Dívidas longo prazo</div>
+                <div class="stat-value"><?= money($due_long) ?></div>
                 <div class="stat-icon">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -1775,8 +1793,8 @@ body.light ::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
             </div>
 
             <div class="stat-card neutral">
-                <div class="stat-label">Total não pago</div>
-                <div class="stat-value"><?= money($total_all) ?></div>
+                <div class="stat-label"><?= $selectedPeriod !== 'all' ? 'Total não pago mês' : 'Total não pago' ?></div>
+                <div class="stat-value"><?= money($total_mes) ?></div>
                 <div class="stat-icon">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M9 14l6-6m-5.5.5h.01m4.99 5h.01M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16l3.5-2 3.5 2 3.5-2 3.5 2z" />
@@ -2070,7 +2088,7 @@ body.light ::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
                                         </button>
                                     </form>
                                     <?php endif; ?>
-                                    <a href="cartoes.php?view=<?= (int)$r['card_id'] ?>" class="btn-icon edit" title="Ver detalhes do cartão" style="width:auto;padding:4px 10px;border-radius:6px;font-size:11px;font-weight:500;font-family:'Sora',sans-serif;text-decoration:none;gap:4px;white-space:nowrap;">
+                                    <a href="cartoes.php?view=<?= (int)$r['card_id'] ?>&fatura=<?= htmlspecialchars($r['fatura_period'] ?? $r['period']) ?>" class="btn-icon edit" title="Ver detalhes desta fatura" style="width:auto;padding:4px 10px;border-radius:6px;font-size:11px;font-weight:500;font-family:'Sora',sans-serif;text-decoration:none;gap:4px;white-space:nowrap;">
                                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" style="width:12px;height:12px;">
                                             <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
                                         </svg>

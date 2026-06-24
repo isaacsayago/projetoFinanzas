@@ -24,6 +24,27 @@ $msgType = '';
 // -------------------- AÇÕES POST --------------------
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
+    // Trocar senha
+    if (isset($_POST['action_change_password'])) {
+        $senha_atual = $_POST['senha_atual'] ?? '';
+        $nova_senha  = $_POST['nova_senha']  ?? '';
+        $confirma    = $_POST['confirma_senha'] ?? '';
+        $stmtU = $pdo->prepare("SELECT senha FROM usuarios WHERE id = :id");
+        $stmtU->execute([':id' => $current_user_id]);
+        $userRow = $stmtU->fetch(PDO::FETCH_ASSOC);
+        if (!$userRow || !password_verify($senha_atual, $userRow['senha'])) {
+            $msg = 'Senha atual incorreta.'; $msgType = 'error';
+        } elseif (strlen($nova_senha) < 6) {
+            $msg = 'A nova senha deve ter no mínimo 6 caracteres.'; $msgType = 'error';
+        } elseif ($nova_senha !== $confirma) {
+            $msg = 'As senhas não coincidem.'; $msgType = 'error';
+        } else {
+            $pdo->prepare("UPDATE usuarios SET senha = :s WHERE id = :id")
+                ->execute([':s' => password_hash($nova_senha, PASSWORD_DEFAULT), ':id' => $current_user_id]);
+            $msg = 'Senha alterada com sucesso!'; $msgType = 'success';
+        }
+    }
+
     // Cadastrar novo cartão
     if (isset($_POST['action_card']) && $_POST['action_card'] === 'create') {
         $nome = trim($_POST['card_nome'] ?? '');
@@ -238,6 +259,12 @@ foreach ($allCards as $card) {
 
 $metrics = getConsolidatedCardMetrics($pdo, $current_user_id);
 
+// Fatura filter from dashboard "Ver" button
+$viewFaturaFilter = null;
+if (isset($_GET['fatura']) && preg_match('/^\d{4}-\d{2}$/', $_GET['fatura'])) {
+    $viewFaturaFilter = $_GET['fatura'];
+}
+
 // Detalhes de um cartão específico
 $viewCard = null;
 $viewFaturas = [];
@@ -255,16 +282,27 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
         $viewFaturas = getProximasFaturas($pdo, $viewCard['id']);
         $viewEvolucao = getEvolucaoGastosCartao($pdo, $viewCard['id']);
 
-        // Histórico de compras
-        $stmtCompras = $pdo->prepare("
-            SELECT e.*, ecl.fatura_period
-            FROM expenses e
-            JOIN expense_card_link ecl ON ecl.expense_id = e.id
-            WHERE ecl.card_id = :card_id
-            ORDER BY e.due_date DESC
-            LIMIT 50
-        ");
-        $stmtCompras->execute([':card_id' => $viewCard['id']]);
+        // Histórico de compras (filtrado por fatura se ?fatura= presente)
+        if ($viewFaturaFilter) {
+            $stmtCompras = $pdo->prepare("
+                SELECT e.*, ecl.fatura_period
+                FROM expenses e
+                JOIN expense_card_link ecl ON ecl.expense_id = e.id
+                WHERE ecl.card_id = :card_id AND ecl.fatura_period = :fatura
+                ORDER BY e.due_date ASC
+            ");
+            $stmtCompras->execute([':card_id' => $viewCard['id'], ':fatura' => $viewFaturaFilter]);
+        } else {
+            $stmtCompras = $pdo->prepare("
+                SELECT e.*, ecl.fatura_period
+                FROM expenses e
+                JOIN expense_card_link ecl ON ecl.expense_id = e.id
+                WHERE ecl.card_id = :card_id
+                ORDER BY e.due_date DESC
+                LIMIT 50
+            ");
+            $stmtCompras->execute([':card_id' => $viewCard['id']]);
+        }
         $viewCompras = $stmtCompras->fetchAll(PDO::FETCH_ASSOC);
     }
 }
@@ -636,39 +674,6 @@ body.light .credit-card-visual:hover { box-shadow: 0 8px 32px rgba(0,0,0,0.1); }
         <span class="sidebar-logo-text">Finanzas</span>
     </div>
 
-    <div class="sidebar-section">
-        <div class="sidebar-section-label">Menu</div>
-    </div>
-
-    <div class="sidebar-nav">
-        <a href="dashboard.php" class="nav-item">
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zm10 0a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zm10 0a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
-            </svg>
-            <span>Dashboard</span>
-        </a>
-        <a href="cartoes.php" class="nav-item active">
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
-            </svg>
-            <span>Cartões</span>
-        </a>
-        <a href="compartilhamento.php" class="nav-item">
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
-            </svg>
-            <span>Compartilhamento</span>
-        </a>
-        <?php if ($is_admin): ?>
-        <a href="usuarios.php" class="nav-item">
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
-            </svg>
-            <span>Usuários</span>
-        </a>
-        <?php endif; ?>
-    </div>
-
     <div class="sidebar-footer">
         <div class="user-info">
             <div class="user-avatar"><?= mb_strtoupper(mb_substr($current_user_name, 0, 1)) ?></div>
@@ -678,12 +683,38 @@ body.light .credit-card-visual:hover { box-shadow: 0 8px 32px rgba(0,0,0,0.1); }
             </div>
         </div>
         <div class="sidebar-actions">
-            <a href="dashboard.php" class="sidebar-action">
+            <a href="cartoes.php" class="sidebar-action active">
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
                 </svg>
-                <span>Voltar</span>
+                <span>Cartões</span>
             </a>
+            <a href="financiamentos.php" class="sidebar-action">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+                </svg>
+                <span>Financiamentos</span>
+            </a>
+            <a href="compartilhamento.php" class="sidebar-action">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+                <span>Compartilhamento</span>
+            </a>
+            <a href="#" class="sidebar-action" onclick="document.getElementById('passwordModal').classList.add('open'); return false;">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+                </svg>
+                <span>Minha conta</span>
+            </a>
+            <?php if ($is_admin): ?>
+            <a href="usuarios.php" class="sidebar-action">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
+                </svg>
+                <span>Usuários</span>
+            </a>
+            <?php endif; ?>
             <form method="post" action="logout.php" style="width:100%">
                 <button type="submit" class="sidebar-action">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
@@ -863,10 +894,23 @@ body.light .credit-card-visual:hover { box-shadow: 0 8px 32px rgba(0,0,0,0.1); }
 
         <!-- Histórico de compras -->
         <div class="detail-section">
+            <?php if ($viewFaturaFilter): ?>
+            <div style="margin-bottom:16px;padding:12px 16px;background:rgba(0,212,255,0.08);border:1px solid rgba(0,212,255,0.2);border-radius:10px;display:flex;align-items:center;justify-content:space-between;gap:12px;">
+                <div style="display:flex;align-items:center;gap:8px;">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;color:var(--accent);flex-shrink:0;"><path stroke-linecap="round" stroke-linejoin="round" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2a1 1 0 01-.293.707L13 13.414V19a1 1 0 01-.553.894l-4 2A1 1 0 017 21v-7.586L3.293 6.707A1 1 0 013 6V4z" /></svg>
+                    <span style="font-size:13px;color:var(--ink);">Exibindo apenas a fatura <strong style="color:var(--accent);"><?php
+                        $dtF = DateTime::createFromFormat('Y-m', $viewFaturaFilter);
+                        $mesesPt = ['JAN','FEV','MAR','ABR','MAI','JUN','JUL','AGO','SET','OUT','NOV','DEZ'];
+                        echo $dtF ? $mesesPt[(int)$dtF->format('n')-1] . '/' . $dtF->format('Y') : $viewFaturaFilter;
+                    ?></strong></span>
+                </div>
+                <a href="cartoes.php?view=<?= (int)$viewCard['id'] ?>" style="font-size:12px;color:var(--accent);text-decoration:none;white-space:nowrap;padding:5px 12px;border:1px solid rgba(0,212,255,0.3);border-radius:6px;">Ver histórico completo</a>
+            </div>
+            <?php endif; ?>
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
                 <h2 style="margin-bottom:0;">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg>
-                    Histórico de Compras
+                    <?= $viewFaturaFilter ? 'Compras desta Fatura' : 'Histórico de Compras' ?>
                 </h2>
                 <?php if ($viewCompras): ?>
                 <form method="post" style="display:inline;">
@@ -1336,5 +1380,41 @@ function prepareSaveEdit(id) {
     return true;
 }
 </script>
+
+<!-- MODAL SENHA -->
+<div class="modal-overlay" id="passwordModal" onclick="if(event.target===this)this.classList.remove('open')" style="position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:1000;display:none;align-items:center;justify-content:center;">
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:28px;width:100%;max-width:400px;position:relative;">
+        <button onclick="document.getElementById('passwordModal').classList.remove('open')" style="position:absolute;top:12px;right:14px;background:none;border:none;color:var(--muted);font-size:20px;cursor:pointer;line-height:1;">&times;</button>
+        <h3 style="margin-bottom:20px;font-size:16px;font-weight:600;">Alterar Senha</h3>
+        <form method="post">
+            <input type="hidden" name="action_change_password" value="1">
+            <div style="display:flex;flex-direction:column;gap:14px;">
+                <div>
+                    <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Senha atual</label>
+                    <input type="password" name="senha_atual" required style="width:100%;padding:9px 10px;border:1.5px solid var(--border);border-radius:8px;font-family:'Sora',sans-serif;font-size:13px;color:var(--ink);background:var(--surface2);">
+                </div>
+                <div>
+                    <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Nova senha</label>
+                    <input type="password" name="nova_senha" required minlength="6" style="width:100%;padding:9px 10px;border:1.5px solid var(--border);border-radius:8px;font-family:'Sora',sans-serif;font-size:13px;color:var(--ink);background:var(--surface2);">
+                </div>
+                <div>
+                    <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Confirmar nova senha</label>
+                    <input type="password" name="confirma_senha" required minlength="6" style="width:100%;padding:9px 10px;border:1.5px solid var(--border);border-radius:8px;font-family:'Sora',sans-serif;font-size:13px;color:var(--ink);background:var(--surface2);">
+                </div>
+                <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:4px;">
+                    <button type="button" onclick="document.getElementById('passwordModal').classList.remove('open')" style="padding:8px 16px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--ink);cursor:pointer;font-family:'Sora',sans-serif;font-size:13px;">Cancelar</button>
+                    <button type="submit" style="padding:8px 16px;background:var(--accent);border:none;border-radius:8px;color:#000;font-weight:600;cursor:pointer;font-family:'Sora',sans-serif;font-size:13px;">Salvar</button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+<style>
+#passwordModal.open { display: flex; }
+.sidebar-action.active { background: rgba(0,212,255,0.08); color: var(--accent) !important; }
+</style>
+<?php if ($msgType === 'error' && strpos($msg, 'Senha') !== false): ?>
+<script>document.getElementById('passwordModal').classList.add('open');</script>
+<?php endif; ?>
 </body>
 </html>

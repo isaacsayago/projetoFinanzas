@@ -335,6 +335,41 @@ tr:hover td { background: rgba(255,255,255,0.02); }
     .form-grid { grid-template-columns: 1fr; }
     .form-grid .span-2 { grid-column: 1; }
 }
+
+/* ===== THEME TOGGLE ===== */
+.btn-theme-toggle { background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 16px; transition: all 0.2s; }
+.btn-theme-toggle:hover { background: var(--surface); transform: rotate(15deg) scale(1.1); }
+
+/* ===== LIGHT MODE ===== */
+body.light {
+    --ink: #0d1117;
+    --bg: #f0f2f7;
+    --surface: #ffffff;
+    --surface2: #f8f9fc;
+    --accent: #2563eb;
+    --accent-hover: #1d4ed8;
+    --accent-light: #eff6ff;
+    --success: #059669;
+    --danger: #dc2626;
+    --warning: #d97706;
+    --muted: #6b7280;
+    --border: #e5e7eb;
+    --purple: #7c3aed;
+    --glow-accent: 0 4px 16px rgba(37,99,235,0.1);
+}
+body.light::before, body.light::after { display: none; }
+body.light .sidebar { background: #0d1117; border-right: 1px solid rgba(255,255,255,0.07); }
+body.light .sidebar-logo-icon { background: var(--accent); border-color: transparent; box-shadow: none; }
+body.light .sidebar-logo-icon svg { color: #fff; }
+body.light .topbar { background: var(--surface); backdrop-filter: none; }
+body.light .loan-card { border-color: var(--border); }
+body.light .stat-card { border-color: var(--border); }
+body.light .stat-card::before { opacity: 0.7; }
+body.light .detail-panel { border-color: var(--border); }
+body.light .data-table tbody tr:hover { background: #fafbfc; }
+body.light .data-table .td-current { background: rgba(37,99,235,0.05); }
+body.light .data-table .td-paid { background: rgba(5,150,105,0.04); }
+body.light input, body.light select { background: #fff; color: var(--ink); border-color: var(--border); }
 </style>
 </head>
 <body>
@@ -415,12 +450,17 @@ tr:hover td { background: rgba(255,255,255,0.02); }
         </div>
         <div class="topbar-sub">Gerencie seus compromissos financeiros de longo prazo</div>
     </div>
-    <a href="dashboard.php#open_loan" class="btn btn-primary" onclick="sessionStorage.setItem('openLoanModal','1');">
-        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5" style="width:14px;height:14px;">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" />
-        </svg>
-        Novo Financiamento
-    </a>
+    <div style="display:flex;align-items:center;gap:10px;">
+        <button class="btn-theme-toggle" id="themeToggle" title="Alternar tema" onclick="toggleTheme()">
+            <span id="themeIcon">☀️</span>
+        </button>
+        <a href="dashboard.php#open_loan" class="btn btn-primary" onclick="sessionStorage.setItem('openLoanModal','1');">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5" style="width:14px;height:14px;">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" />
+            </svg>
+            Novo Financiamento
+        </a>
+    </div>
 </div>
 
 <div class="content">
@@ -790,6 +830,23 @@ tr:hover td { background: rgba(255,255,255,0.02); }
 <?php if ($senha_msg): ?>
 document.getElementById('passwordModal').classList.add('open');
 <?php endif; ?>
+
+// ===== TEMA =====
+(function() {
+    const saved = localStorage.getItem('finanzas_theme');
+    if (saved === 'light') {
+        document.body.classList.add('light');
+        document.getElementById('themeIcon').textContent = '🌙';
+    } else {
+        document.getElementById('themeIcon').textContent = '☀️';
+    }
+})();
+
+function toggleTheme() {
+    const isLight = document.body.classList.toggle('light');
+    document.getElementById('themeIcon').textContent = isLight ? '🌙' : '☀️';
+    localStorage.setItem('finanzas_theme', isLight ? 'light' : 'dark');
+}
 </script>
 </body>
 </html>
