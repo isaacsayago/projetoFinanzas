@@ -534,29 +534,19 @@ $userCards = $userCardsStmt->fetchAll(PDO::FETCH_ASSOC);
 
 // ---- Dados para gráfico "Top Despesas" (inclui financiamentos) ----
 if ($selectedPeriod !== 'all') {
-    $topStmt = $pdo->prepare("
-        SELECT name, total FROM (
-            SELECT name, SUM(amount) as total FROM expenses
-            WHERE type='expense' AND period=:period AND {$whereUser} GROUP BY name
-            UNION ALL
-            SELECT CONCAT('🏦 ', l.name) as name, SUM(li.amount) as total
-            FROM loan_installments li JOIN loans l ON l.id=li.loan_id
-            WHERE li.period=:period2 AND l.user_id=:uid3 AND l.active=1 GROUP BY l.id, l.name
-        ) combined ORDER BY total DESC LIMIT 7");
-    $topStmt->execute([':period'=>$selectedPeriod,':uid'=>$data_user_id,':uid2'=>$data_user_id,':period2'=>$selectedPeriod,':uid3'=>$data_user_id]);
+    $topStmt = $pdo->prepare("SELECT name, SUM(amount) as total FROM expenses WHERE type='expense' AND period=:period AND {$whereUser} GROUP BY name ORDER BY total DESC LIMIT 7");
+    $topStmt->execute([':period'=>$selectedPeriod,':uid'=>$data_user_id,':uid2'=>$data_user_id]);
+    $topFinStmt = $pdo->prepare("SELECT CONCAT('🏦 ', l.name) as name, SUM(li.amount) as total FROM loan_installments li JOIN loans l ON l.id=li.loan_id WHERE li.period=:period AND l.user_id=:uid AND l.active=1 GROUP BY l.id, l.name");
+    $topFinStmt->execute([':period'=>$selectedPeriod,':uid'=>$data_user_id]);
 } else {
-    $topStmt = $pdo->prepare("
-        SELECT name, total FROM (
-            SELECT name, SUM(amount) as total FROM expenses
-            WHERE type='expense' AND {$whereUser} GROUP BY name
-            UNION ALL
-            SELECT CONCAT('🏦 ', l.name) as name, SUM(li.amount) as total
-            FROM loan_installments li JOIN loans l ON l.id=li.loan_id
-            WHERE l.user_id=:uid3 AND l.active=1 GROUP BY l.id, l.name
-        ) combined ORDER BY total DESC LIMIT 7");
-    $topStmt->execute([':uid'=>$data_user_id,':uid2'=>$data_user_id,':uid3'=>$data_user_id]);
+    $topStmt = $pdo->prepare("SELECT name, SUM(amount) as total FROM expenses WHERE type='expense' AND {$whereUser} GROUP BY name ORDER BY total DESC LIMIT 7");
+    $topStmt->execute([':uid'=>$data_user_id,':uid2'=>$data_user_id]);
+    $topFinStmt = $pdo->prepare("SELECT CONCAT('🏦 ', l.name) as name, SUM(li.amount) as total FROM loan_installments li JOIN loans l ON l.id=li.loan_id WHERE l.user_id=:uid AND l.active=1 GROUP BY l.id, l.name");
+    $topFinStmt->execute([':uid'=>$data_user_id]);
 }
-$topExpenses = $topStmt->fetchAll(PDO::FETCH_ASSOC);
+$topAll = array_merge($topStmt->fetchAll(PDO::FETCH_ASSOC), $topFinStmt->fetchAll(PDO::FETCH_ASSOC));
+usort($topAll, fn($a, $b) => $b['total'] <=> $a['total']);
+$topExpenses = array_slice($topAll, 0, 7);
 
 // ---- Dados para gráfico "Despesas pagas vs pendentes" ----
 if ($selectedPeriod !== 'all') {
