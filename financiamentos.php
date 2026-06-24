@@ -110,6 +110,45 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 
+    // Recalcular todas as parcelas (corrige data de início)
+    if (isset($_POST['action_recalculate'])) {
+        $loanId      = (int)($_POST['loan_id'] ?? 0);
+        $nextDate    = trim($_POST['recalc_next_date'] ?? '');
+        $totalParc   = (int)($_POST['recalc_total'] ?? 0);
+        $alreadyPaid = (int)($_POST['recalc_paid'] ?? 0);
+        $valorParc   = str_replace(',', '.', trim($_POST['recalc_valor'] ?? ''));
+
+        $stmtOwner = $pdo->prepare("SELECT id FROM loans WHERE id=:id AND user_id=:uid");
+        $stmtOwner->execute([':id'=>$loanId, ':uid'=>$current_user_id]);
+        if ($loanId && $nextDate && $totalParc > 0 && is_numeric($valorParc) && $stmtOwner->fetch()) {
+            // Calcula first_due_date = próxima parcela - parcelas já pagas
+            $dt = new DateTime($nextDate);
+            $origDay = (int)$dt->format('d');
+            if ($alreadyPaid > 0) {
+                $dt->modify('first day of this month');
+                $dt->modify('-' . $alreadyPaid . ' months');
+                $lastDay = (int)$dt->format('t');
+                $dt->setDate((int)$dt->format('Y'), (int)$dt->format('m'), min($origDay, $lastDay));
+            }
+            $firstDate = $dt->format('Y-m-d');
+
+            // Atualiza loan e apaga parcelas antigas
+            $pdo->prepare("
+                UPDATE loans SET total_installments=:total, installment_amount=:valor,
+                    first_due_date=:first, already_paid_installments=:paid
+                WHERE id=:id AND user_id=:uid
+            ")->execute([':total'=>$totalParc,':valor'=>(float)$valorParc,':first'=>$firstDate,':paid'=>$alreadyPaid,':id'=>$loanId,':uid'=>$current_user_id]);
+
+            $pdo->prepare("DELETE FROM loan_installments WHERE loan_id = :lid")
+                ->execute([':lid' => $loanId]);
+
+            generateLoanInstallments($pdo, $loanId);
+            $msg = 'Parcelas recalculadas com sucesso!';
+            $msg_type = 'success';
+        }
+        header("Location: financiamentos.php?view=$loanId"); exit;
+    }
+
     // Editar dados básicos do financiamento
     if (isset($_POST['action_edit_loan'])) {
         $loanId = (int)($_POST['loan_id'] ?? 0);
@@ -586,6 +625,42 @@ body.light input, body.light select { background: #fff; color: var(--ink); borde
         <strong style="color:var(--ink);">Observações:</strong> <?= htmlspecialchars($loan['notes']) ?>
     </div>
     <?php endif; ?>
+
+    <!-- RECALCULAR PARCELAS -->
+    <details style="margin-bottom:24px;">
+        <summary style="cursor:pointer;font-size:13px;font-weight:600;color:var(--warning);padding:10px 14px;background:rgba(255,214,0,0.06);border:1px solid rgba(255,214,0,0.2);border-radius:10px;list-style:none;display:flex;align-items:center;gap:8px;">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" style="width:15px;height:15px;flex-shrink:0;"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+            Corrigir / Recalcular Parcelas
+        </summary>
+        <div style="margin-top:10px;padding:16px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;">
+            <p style="font-size:12px;color:var(--muted);margin-bottom:14px;">Informe a <strong>data da próxima parcela a pagar</strong>, o total de parcelas e quantas já foram pagas. As parcelas existentes serão apagadas e recriadas corretamente.</p>
+            <form method="post" onsubmit="return confirm('Isso apagará e recriará TODAS as parcelas. Confirmar?')">
+                <input type="hidden" name="action_recalculate" value="1">
+                <input type="hidden" name="loan_id" value="<?= (int)$loan['id'] ?>">
+                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;align-items:end;">
+                    <div>
+                        <label style="font-size:11px;color:var(--muted);display:block;margin-bottom:4px;">Data da próxima parcela *</label>
+                        <input type="date" name="recalc_next_date" required style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:8px;background:var(--surface);color:var(--ink);font-family:'Sora',sans-serif;font-size:13px;">
+                    </div>
+                    <div>
+                        <label style="font-size:11px;color:var(--muted);display:block;margin-bottom:4px;">Total de parcelas *</label>
+                        <input type="number" name="recalc_total" min="1" max="600" value="<?= (int)$loan['total_installments'] ?>" required style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:8px;background:var(--surface);color:var(--ink);font-family:'Sora',sans-serif;font-size:13px;">
+                    </div>
+                    <div>
+                        <label style="font-size:11px;color:var(--muted);display:block;margin-bottom:4px;">Parcelas já pagas *</label>
+                        <input type="number" name="recalc_paid" min="0" max="599" value="<?= (int)$loan['parcelas_pagas'] ?>" required style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:8px;background:var(--surface);color:var(--ink);font-family:'Sora',sans-serif;font-size:13px;">
+                    </div>
+                    <div>
+                        <label style="font-size:11px;color:var(--muted);display:block;margin-bottom:4px;">Valor da parcela (R$) *</label>
+                        <input type="text" name="recalc_valor" inputmode="decimal" value="<?= number_format((float)$loan['installment_amount'], 2, ',', '') ?>" required style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:8px;background:var(--surface);color:var(--ink);font-family:'Sora',sans-serif;font-size:13px;">
+                    </div>
+                    <div>
+                        <button type="submit" class="btn btn-secondary btn-sm" style="width:100%;border-color:rgba(255,214,0,0.4);color:var(--warning);">Recalcular</button>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </details>
 
     <!-- TABELA DE PARCELAS -->
     <div class="table-card">

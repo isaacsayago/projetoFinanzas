@@ -224,17 +224,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $loanTotal = str_replace(',', '.', trim($_POST['loan_total_amount'] ?? ''));
         $loanParcelas = (int)($_POST['loan_total_installments'] ?? 0);
         $loanValorParcela = str_replace(',', '.', trim($_POST['loan_installment_amount'] ?? ''));
-        $loanFirstDate = trim($_POST['loan_first_due_date'] ?? '');
+        $loanNextDate = trim($_POST['loan_first_due_date'] ?? ''); // campo: "data da próxima parcela"
         $loanInstitution = trim($_POST['loan_institution'] ?? '');
         $loanRate = trim($_POST['loan_interest_rate'] ?? '');
         $loanAlreadyPaid = (int)($_POST['loan_already_paid'] ?? 0);
         $loanNotes = trim($_POST['loan_notes'] ?? '');
 
         if ($loanName && $loanTotal && is_numeric($loanTotal) && $loanParcelas > 0
-            && $loanValorParcela && is_numeric($loanValorParcela) && $loanFirstDate) {
+            && $loanValorParcela && is_numeric($loanValorParcela) && $loanNextDate) {
 
             $loanRate = ($loanRate !== '' && is_numeric(str_replace(',', '.', $loanRate)))
                 ? (float)str_replace(',', '.', $loanRate) : null;
+
+            // Calcula a data da 1ª parcela real subtraindo as parcelas já pagas
+            if ($loanAlreadyPaid > 0) {
+                $dt = new DateTime($loanNextDate);
+                $origDay = (int)$dt->format('d');
+                $dt->modify('first day of this month');
+                $dt->modify('-' . $loanAlreadyPaid . ' months');
+                $lastDay = (int)$dt->format('t');
+                $dt->setDate((int)$dt->format('Y'), (int)$dt->format('m'), min($origDay, $lastDay));
+                $loanFirstDate = $dt->format('Y-m-d');
+            } else {
+                $loanFirstDate = $loanNextDate;
+            }
 
             $stmtLoan = $pdo->prepare("
                 INSERT INTO loans (user_id, name, category, total_amount, total_installments,
@@ -2369,8 +2382,9 @@ body.light ::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
                             <input name="loan_already_paid" type="number" min="0" max="599" value="0" placeholder="0">
                         </div>
                         <div>
-                            <label>Data da 1ª Parcela *</label>
+                            <label>Data da próxima parcela *</label>
                             <input name="loan_first_due_date" type="date" required>
+                            <small style="color:var(--muted);font-size:11px;">Se nenhuma parcela foi paga, informe a data da 1ª parcela.</small>
                         </div>
                         <div>
                             <label>Taxa de Juros (% a.m.) — opcional</label>
