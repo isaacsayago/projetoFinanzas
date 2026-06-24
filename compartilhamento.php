@@ -22,6 +22,27 @@ $msgType = '';
 // -------------------- AÇÕES POST --------------------
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
+    // Trocar senha
+    if (isset($_POST['action_change_password'])) {
+        $senha_atual = $_POST['senha_atual'] ?? '';
+        $nova_senha  = $_POST['nova_senha']  ?? '';
+        $confirma    = $_POST['confirma_senha'] ?? '';
+        $stmtU = $pdo->prepare("SELECT senha FROM usuarios WHERE id = :id");
+        $stmtU->execute([':id' => $current_user_id]);
+        $userRow = $stmtU->fetch(PDO::FETCH_ASSOC);
+        if (!$userRow || !password_verify($senha_atual, $userRow['senha'])) {
+            $msg = 'Senha atual incorreta.'; $msgType = 'error';
+        } elseif (strlen($nova_senha) < 6) {
+            $msg = 'A nova senha deve ter no mínimo 6 caracteres.'; $msgType = 'error';
+        } elseif ($nova_senha !== $confirma) {
+            $msg = 'As senhas não coincidem.'; $msgType = 'error';
+        } else {
+            $pdo->prepare("UPDATE usuarios SET senha = :s WHERE id = :id")
+                ->execute([':s' => password_hash($nova_senha, PASSWORD_DEFAULT), ':id' => $current_user_id]);
+            $msg = 'Senha alterada com sucesso!'; $msgType = 'success';
+        }
+    }
+
     // Enviar convite
     if (isset($_POST['action_share']) && $_POST['action_share'] === 'invite') {
         $email = trim($_POST['invite_email'] ?? '');
@@ -358,6 +379,10 @@ body.light .data-table tbody tr:hover { background: #fafbfc; }
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" /></svg>
             <span>Cartões</span>
         </a>
+        <a href="financiamentos.php" class="nav-item">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" /></svg>
+            <span>Financiamentos</span>
+        </a>
         <a href="compartilhamento.php" class="nav-item active">
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
             <span>Compartilhamento</span>
@@ -379,9 +404,9 @@ body.light .data-table tbody tr:hover { background: #fafbfc; }
             </div>
         </div>
         <div class="sidebar-actions">
-            <a href="dashboard.php" class="sidebar-action">
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18" /></svg>
-                <span>Voltar</span>
+            <a href="#" class="sidebar-action" onclick="document.getElementById('passwordModal').classList.add('open'); return false;">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" /></svg>
+                <span>Minha conta</span>
             </a>
             <form method="post" action="logout.php" style="width:100%">
                 <button type="submit" class="sidebar-action">
@@ -623,5 +648,38 @@ function toggleTheme() {
     localStorage.setItem('finanzas_theme', isLight ? 'light' : 'dark');
 }
 </script>
+
+<!-- MODAL SENHA -->
+<div class="modal-overlay" id="passwordModal" onclick="if(event.target===this)this.classList.remove('open')" style="position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:1000;display:none;align-items:center;justify-content:center;">
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:28px;width:100%;max-width:400px;position:relative;">
+        <button onclick="document.getElementById('passwordModal').classList.remove('open')" style="position:absolute;top:12px;right:14px;background:none;border:none;color:var(--muted);font-size:20px;cursor:pointer;line-height:1;">&times;</button>
+        <h3 style="margin-bottom:20px;font-size:16px;font-weight:600;">Alterar Senha</h3>
+        <form method="post">
+            <input type="hidden" name="action_change_password" value="1">
+            <div style="display:flex;flex-direction:column;gap:14px;">
+                <div>
+                    <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Senha atual</label>
+                    <input type="password" name="senha_atual" required style="width:100%;padding:9px 10px;border:1.5px solid var(--border);border-radius:8px;font-family:'Sora',sans-serif;font-size:13px;color:var(--ink);background:var(--surface2);">
+                </div>
+                <div>
+                    <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Nova senha</label>
+                    <input type="password" name="nova_senha" required minlength="6" style="width:100%;padding:9px 10px;border:1.5px solid var(--border);border-radius:8px;font-family:'Sora',sans-serif;font-size:13px;color:var(--ink);background:var(--surface2);">
+                </div>
+                <div>
+                    <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Confirmar nova senha</label>
+                    <input type="password" name="confirma_senha" required minlength="6" style="width:100%;padding:9px 10px;border:1.5px solid var(--border);border-radius:8px;font-family:'Sora',sans-serif;font-size:13px;color:var(--ink);background:var(--surface2);">
+                </div>
+                <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:4px;">
+                    <button type="button" onclick="document.getElementById('passwordModal').classList.remove('open')" style="padding:8px 16px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--ink);cursor:pointer;font-family:'Sora',sans-serif;font-size:13px;">Cancelar</button>
+                    <button type="submit" style="padding:8px 16px;background:var(--accent);border:none;border-radius:8px;color:#000;font-weight:600;cursor:pointer;font-family:'Sora',sans-serif;font-size:13px;">Salvar</button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+<style>#passwordModal.open { display: flex; }</style>
+<?php if ($msgType === 'error' && strpos($msg, 'Senha') !== false): ?>
+<script>document.getElementById('passwordModal').classList.add('open');</script>
+<?php endif; ?>
 </body>
 </html>
