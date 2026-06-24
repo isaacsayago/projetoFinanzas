@@ -110,6 +110,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 
+    // Excluir financiamento e todas as parcelas
+    if (isset($_POST['action_delete_loan'])) {
+        $loanId = (int)($_POST['loan_id'] ?? 0);
+        if ($loanId) {
+            $pdo->prepare("DELETE FROM loan_installments WHERE loan_id = :lid")
+                ->execute([':lid' => $loanId]);
+            $pdo->prepare("DELETE FROM loans WHERE id = :id AND user_id = :uid")
+                ->execute([':id' => $loanId, ':uid' => $current_user_id]);
+            header('Location: financiamentos.php'); exit;
+        }
+    }
+
     // Recalcular todas as parcelas (corrige data de início)
     if (isset($_POST['action_recalculate'])) {
         $loanId      = (int)($_POST['loan_id'] ?? 0);
@@ -549,6 +561,14 @@ body.light input, body.light select { background: #fff; color: var(--ink); borde
                 <input type="hidden" name="action_encerrar" value="1">
                 <input type="hidden" name="loan_id" value="<?= (int)$loan['id'] ?>">
                 <button type="submit" class="btn btn-danger btn-sm">Encerrar</button>
+            </form>
+            <form method="post" style="display:inline;" onsubmit="return confirm('ATENÇÃO: Isso apagará PERMANENTEMENTE este financiamento e todas as suas parcelas. Esta ação não pode ser desfeita. Confirmar exclusão?')">
+                <input type="hidden" name="action_delete_loan" value="1">
+                <input type="hidden" name="loan_id" value="<?= (int)$loan['id'] ?>">
+                <button type="submit" class="btn btn-sm" style="border-color:rgba(255,45,85,0.5);color:var(--danger);background:rgba(255,45,85,0.08);">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" style="width:13px;height:13px;"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                    Excluir
+                </button>
             </form>
         </div>
     </div>
