@@ -106,6 +106,20 @@ if ($action === 'toggle' && isset($_GET['id'])) {
     header("Location: " . $redirectUrl); exit;
 }
 
+// Marcar/desmarcar pagamento da parte compartilhada (shared_paid)
+if ($action === 'toggle_shared' && isset($_GET['id'])) {
+    $id = (int)$_GET['id'];
+    $cur = $pdo->prepare("SELECT shared_paid FROM expenses WHERE id = :id AND (user_id = :uid OR shared_with_user_id = :uid2)");
+    $cur->execute([':id' => $id, ':uid' => $current_user_id, ':uid2' => $current_user_id]);
+    $r = $cur->fetch(PDO::FETCH_ASSOC);
+    if ($r !== false) {
+        $new = $r['shared_paid'] ? 0 : 1;
+        $pdo->prepare("UPDATE expenses SET shared_paid = :paid WHERE id = :id AND (user_id = :uid OR shared_with_user_id = :uid2)")
+            ->execute([':paid' => $new, ':id' => $id, ':uid' => $current_user_id, ':uid2' => $current_user_id]);
+    }
+    header("Location: " . $redirectUrl); exit;
+}
+
 if ($action === 'copy_prev' && $selectedPeriod !== 'all') {
     $targetDate = new DateTime($selectedPeriod . '-01');
     $prevDate = clone $targetDate;
@@ -291,7 +305,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if (isset($_POST['name']) && is_array($_POST['name'])) {
-        $stmt = $pdo->prepare("INSERT INTO expenses (user_id, shared_with_user_id, name, amount, due_date, type, planned, period) VALUES (:user_id, :shared_uid, :name, :amount, :due_date, :type, :planned, :period)");
+        $stmt = $pdo->prepare("INSERT INTO expenses (user_id, shared_with_user_id, share_percent, name, amount, due_date, type, planned, period) VALUES (:user_id, :shared_uid, :share_pct, :name, :amount, :due_date, :type, :planned, :period)");
         $stmtCardLink = $pdo->prepare("INSERT INTO expense_card_link (expense_id, card_id, fatura_period) VALUES (:eid, :cid, :fatura)");
 
         foreach ($_POST['name'] as $i => $n) {
@@ -304,6 +318,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $parcelado = isset($_POST['parcelado'][$i]) && $_POST['parcelado'][$i] === '1' && $parcelas > 1;
             $cardId = isset($_POST['card_id'][$i]) && $_POST['card_id'][$i] !== '' ? (int)$_POST['card_id'][$i] : null;
             $sharedWithUid = isset($_POST['shared_with'][$i]) && $_POST['shared_with'][$i] !== '' ? (int)$_POST['shared_with'][$i] : null;
+            $sharePct = null;
+            if ($sharedWithUid && isset($_POST['share_percent'][$i]) && $_POST['share_percent'][$i] !== '') {
+                $sharePct = max(1, min(99, (int)$_POST['share_percent'][$i]));
+            }
 
             // Buscar dados do cartão selecionado
             $diaFechamento = null;
@@ -352,7 +370,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             $dVenc = min($diaVencimento, $lastD);
                             $dueDate = sprintf('%04d-%02d-%02d', $fatY, $fatM, $dVenc);
 
-                            $stmt->execute([':user_id'=>$current_user_id,':shared_uid'=>$sharedWithUid,':name'=>$nomeParcela,':amount'=>$a,':due_date'=>$dueDate,':type'=>'expense',':planned'=>$planned,':period'=>$faturaPeriod]);
+                            $stmt->execute([':user_id'=>$current_user_id,':shared_uid'=>$sharedWithUid,':share_pct'=>$sharePct,':name'=>$nomeParcela,':amount'=>$a,':due_date'=>$dueDate,':type'=>'expense',':planned'=>$planned,':period'=>$faturaPeriod]);
                             $expenseId = $pdo->lastInsertId();
                             $stmtCardLink->execute([':eid'=>$expenseId, ':cid'=>$cardId, ':fatura'=>$faturaPeriod]);
                         }
@@ -364,7 +382,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $dVenc = min($diaVencimento, $lastD);
                         $dueDate = sprintf('%04d-%02d-%02d', $fatY, $fatM, $dVenc);
 
-                        $stmt->execute([':user_id'=>$current_user_id,':shared_uid'=>$sharedWithUid,':name'=>$n,':amount'=>$a,':due_date'=>$dueDate,':type'=>'expense',':planned'=>$planned,':period'=>$faturaPeriod]);
+                        $stmt->execute([':user_id'=>$current_user_id,':shared_uid'=>$sharedWithUid,':share_pct'=>$sharePct,':name'=>$n,':amount'=>$a,':due_date'=>$dueDate,':type'=>'expense',':planned'=>$planned,':period'=>$faturaPeriod]);
                         $expenseId = $pdo->lastInsertId();
                         $stmtCardLink->execute([':eid'=>$expenseId, ':cid'=>$cardId, ':fatura'=>$faturaPeriod]);
                     }
@@ -386,10 +404,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 }
                             }
                             $parcelDateStr = $parcelDate->format('Y-m-d');
-                            $stmt->execute([':user_id'=>$current_user_id,':shared_uid'=>$sharedWithUid,':name'=>$nomeParcela,':amount'=>$a,':due_date'=>$parcelDateStr,':type'=>$type,':planned'=>$planned,':period'=>$parcelDate->format('Y-m')]);
+                            $stmt->execute([':user_id'=>$current_user_id,':shared_uid'=>$sharedWithUid,':share_pct'=>$sharePct,':name'=>$nomeParcela,':amount'=>$a,':due_date'=>$parcelDateStr,':type'=>$type,':planned'=>$planned,':period'=>$parcelDate->format('Y-m')]);
                         }
                     } else {
-                        $stmt->execute([':user_id'=>$current_user_id,':shared_uid'=>$sharedWithUid,':name'=>$n,':amount'=>$a,':due_date'=>$d,':type'=>$type,':planned'=>$planned,':period'=>(new DateTime($d))->format('Y-m')]);
+                        $stmt->execute([':user_id'=>$current_user_id,':shared_uid'=>$sharedWithUid,':share_pct'=>$sharePct,':name'=>$n,':amount'=>$a,':due_date'=>$d,':type'=>$type,':planned'=>$planned,':period'=>(new DateTime($d))->format('Y-m')]);
                     }
                 }
             }
@@ -2054,12 +2072,16 @@ body.light ::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
                             $isFatura = !empty($r['is_fatura']);
                             $isFinanciamento = !empty($r['is_financiamento']);
                             $isShared = !empty($r['shared_with_user_id']);
+                            $hasSplit = $isShared && !empty($r['share_percent']);
                             if ($isFatura || $isFinanciamento) {
                                 $canAct = false;
                             } else {
                                 $canAct = ($r['user_id'] == $current_user_id || (isset($r['shared_with_user_id']) && $r['shared_with_user_id'] == $current_user_id));
                                 if ($viewing_shared && !$isShared) $canAct = false;
                             }
+                            $isOwnerRow = ($r['user_id'] ?? 0) == $current_user_id;
+                            $myPct = $hasSplit ? ($isOwnerRow ? (100 - (int)$r['share_percent']) : (int)$r['share_percent']) : 100;
+                            $myAmount = $hasSplit ? ($r['amount'] * $myPct / 100) : $r['amount'];
                         ?>
                         <tr>
                             <td>
@@ -2068,10 +2090,24 @@ body.light ::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
                                 <span class="badge planned" style="margin-top:2px;font-size:10px;">Planificado</span>
                                 <?php endif; ?>
                             </td>
-                            <td><span class="item-amount" style="color:var(--danger)"><?= money($r['amount']) ?></span></td>
+                            <td>
+                                <span class="item-amount" style="color:var(--danger)"><?= money($r['amount']) ?></span>
+                                <?php if ($hasSplit): ?>
+                                <div style="font-size:10px;color:var(--muted);margin-top:2px;">Minha parte: <?= $myPct ?>% = <?= money($myAmount) ?></div>
+                                <?php endif; ?>
+                            </td>
                             <td><span class="item-date"><?= safe(formataDataBr($r['due_date'])) ?></span></td>
                             <td>
-                                <?php if ($r['paid']): ?>
+                                <?php if ($hasSplit): ?>
+                                    <div style="display:flex;flex-direction:column;gap:3px;">
+                                        <span class="badge <?= $r['paid'] ? 'paid' : 'unpaid' ?>" style="font-size:10px;padding:2px 6px;">
+                                            Eu: <?= $r['paid'] ? '✓' : '○' ?>
+                                        </span>
+                                        <span class="badge <?= $r['shared_paid'] ? 'paid' : 'unpaid' ?>" style="font-size:10px;padding:2px 6px;">
+                                            Deles: <?= $r['shared_paid'] ? '✓' : '○' ?>
+                                        </span>
+                                    </div>
+                                <?php elseif ($r['paid']): ?>
                                     <span class="badge paid">✓ Pago</span>
                                 <?php else: ?>
                                     <span class="badge unpaid">Pendente</span>
@@ -2080,11 +2116,20 @@ body.light ::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
                             <td>
                                 <?php if ($canAct): ?>
                                 <div class="action-btns">
-                                    <a class="btn-icon toggle" href="?action=toggle&id=<?= (int)$r['id'] ?>&period=<?= $selectedPeriod ?>" title="<?= $r['paid'] ? 'Desmarcar' : 'Marcar pago' ?>">
-                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
-                                            <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
-                                        </svg>
-                                    </a>
+                                    <?php if ($hasSplit): ?>
+                                        <a class="btn-icon toggle" href="?action=toggle&id=<?= (int)$r['id'] ?>&period=<?= $selectedPeriod ?>" title="<?= $r['paid'] ? 'Desmarcar meu pagamento' : 'Marcar meu pagamento' ?>" style="<?= $r['paid'] ? 'color:var(--success)' : 'opacity:0.45' ?>">
+                                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
+                                        </a>
+                                        <a class="btn-icon" href="?action=toggle_shared&id=<?= (int)$r['id'] ?>&period=<?= $selectedPeriod ?>" title="<?= $r['shared_paid'] ? 'Desmarcar pagamento deles' : 'Marcar pagamento deles' ?>" style="background:<?= $r['shared_paid'] ? 'rgba(0,212,255,0.12)' : 'var(--surface2)' ?>;color:<?= $r['shared_paid'] ? 'var(--accent)' : 'var(--muted)' ?>;width:28px;height:28px;border-radius:6px;display:flex;align-items:center;justify-content:center;text-decoration:none;border:1px solid <?= $r['shared_paid'] ? 'rgba(0,212,255,0.3)' : 'var(--border)' ?>;">
+                                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5" style="width:14px;height:14px;"><path stroke-linecap="round" stroke-linejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0" /></svg>
+                                        </a>
+                                    <?php else: ?>
+                                        <a class="btn-icon toggle" href="?action=toggle&id=<?= (int)$r['id'] ?>&period=<?= $selectedPeriod ?>" title="<?= $r['paid'] ? 'Desmarcar' : 'Marcar pago' ?>">
+                                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+                                                <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+                                            </svg>
+                                        </a>
+                                    <?php endif; ?>
                                     <a class="btn-icon edit" href="?action=edit&id=<?= (int)$r['id'] ?>&period=<?= $selectedPeriod ?>" title="Editar">
                                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                                             <path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
@@ -2328,15 +2373,20 @@ body.light ::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
                             <?php if (!empty($sharePartners)): ?>
                             <div>
                                 <label>Compartilhar com</label>
-                                <select name="shared_with[]">
+                                <select name="shared_with[]" onchange="toggleSharePct(this)">
                                     <option value="">Nenhum</option>
                                     <?php foreach ($sharePartners as $spId => $spName): ?>
                                     <option value="<?= (int)$spId ?>"><?= safe($spName) ?></option>
                                     <?php endforeach; ?>
                                 </select>
                             </div>
+                            <div class="share-pct-wrap" style="display:none;">
+                                <label>% dela pagar</label>
+                                <input type="number" name="share_percent[]" min="1" max="99" value="50" placeholder="50" style="width:72px;">
+                            </div>
                             <?php else: ?>
                             <input type="hidden" name="shared_with[]" value="">
+                            <input type="hidden" name="share_percent[]" value="">
                             <?php endif; ?>
                             <div style="padding-bottom:1px;">
                                 <label style="visibility:hidden">x</label>
@@ -2900,12 +2950,19 @@ function toggleParcelas(sel) {
     }
 }
 
+function toggleSharePct(sel) {
+    const wrap = sel.closest('.entry-row') ? sel.closest('.entry-row').querySelector('.share-pct-wrap') : null;
+    if (wrap) wrap.style.display = sel.value ? 'block' : 'none';
+}
+
 function addEntryRow() {
     const container = document.getElementById('entryRows');
     const firstRow = container.querySelector('.entry-row');
     const newRow = firstRow.cloneNode(true);
     newRow.querySelectorAll('input').forEach(i => { if (i.type !== 'date') i.value = ''; });
     newRow.querySelectorAll('select').forEach(s => s.selectedIndex = 0);
+    const pctWrap = newRow.querySelector('.share-pct-wrap');
+    if (pctWrap) pctWrap.style.display = 'none';
     const parcelasField = newRow.querySelector('.parcelas-field');
     if (parcelasField) { parcelasField.style.display = 'none'; parcelasField.querySelector('input').value = '2'; }
     // Reset date field state

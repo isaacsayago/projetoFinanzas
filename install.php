@@ -174,7 +174,22 @@ if (tableExists($pdo, 'expenses') && !columnExists($pdo, 'expenses', 'shared_wit
 }
 
 // ============================================================
-// 7. TABELA: loans (Financiamentos e Empréstimos)
+// 7. COLUNAS share_percent e shared_paid em expenses
+//    Divisão percentual de despesas compartilhadas
+// ============================================================
+if (tableExists($pdo, 'expenses') && !columnExists($pdo, 'expenses', 'share_percent')) {
+    runSQL($pdo, "ALTER TABLE expenses ADD COLUMN share_percent TINYINT UNSIGNED NULL DEFAULT NULL AFTER shared_with_user_id", 'Adicionar coluna share_percent em expenses', $results, $errors);
+} else {
+    $results[] = 'SKIP — Coluna share_percent já existe em expenses';
+}
+if (tableExists($pdo, 'expenses') && !columnExists($pdo, 'expenses', 'shared_paid')) {
+    runSQL($pdo, "ALTER TABLE expenses ADD COLUMN shared_paid TINYINT(1) NOT NULL DEFAULT 0 AFTER share_percent", 'Adicionar coluna shared_paid em expenses', $results, $errors);
+} else {
+    $results[] = 'SKIP — Coluna shared_paid já existe em expenses';
+}
+
+// ============================================================
+// 8. TABELA: loans (Financiamentos e Empréstimos)
 // ============================================================
 if (!tableExists($pdo, 'loans')) {
     runSQL($pdo, "
@@ -203,7 +218,7 @@ if (!tableExists($pdo, 'loans')) {
 }
 
 // ============================================================
-// 8. TABELA: loan_installments (Parcelas de financiamentos)
+// 9. TABELA: loan_installments (Parcelas de financiamentos)
 // ============================================================
 if (!tableExists($pdo, 'loan_installments')) {
     runSQL($pdo, "
